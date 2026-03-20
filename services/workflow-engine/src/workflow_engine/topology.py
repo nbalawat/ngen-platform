@@ -18,6 +18,11 @@ from ngen_framework_core.executor import AgentExecutor
 from ngen_framework_core.protocols import AgentEvent, AgentEventType, AgentInput
 
 from workflow_engine.errors import TopologyError
+from workflow_engine.resilience import (
+    CircuitBreakerRegistry,
+    ResilienceConfig,
+    execute_with_resilience,
+)
 from workflow_engine.state import WorkflowState, safe_eval_condition
 
 logger = logging.getLogger(__name__)
@@ -41,6 +46,8 @@ class SequentialTopologyExecutor:
         executor: AgentExecutor,
         state: WorkflowState,
         input_data: AgentInput,
+        resilience_configs: dict[str, ResilienceConfig] | None = None,
+        circuit_registry: CircuitBreakerRegistry | None = None,
     ) -> AsyncIterator[AgentEvent]:
         for agent_name in agents:
             await state.set_current_agent(agent_name)
@@ -50,11 +57,27 @@ class SequentialTopologyExecutor:
                 context={**input_data.context, **state.to_dict()},
                 session_id=input_data.session_id,
             )
-            collected_text: list[str] = []
-            async for event in executor.execute(agent_name, agent_input):
-                if event.type == AgentEventType.TEXT_DELTA:
-                    collected_text.append(event.data.get("text", ""))
-                yield event
+
+            resilience = (resilience_configs or {}).get(agent_name)
+            if resilience and (resilience.retry.max_retries > 0 or resilience.timeout.timeout_seconds or resilience.circuit_breaker_enabled):
+                # Use resilient execution
+                events = await execute_with_resilience(
+                    agent_name=agent_name,
+                    execute_fn=lambda _name=agent_name, _input=agent_input: executor.execute(_name, _input),
+                    resilience=resilience,
+                    circuit_registry=circuit_registry,
+                )
+                collected_text: list[str] = []
+                for event in events:
+                    if event.type == AgentEventType.TEXT_DELTA:
+                        collected_text.append(event.data.get("text", ""))
+                    yield event
+            else:
+                collected_text = []
+                async for event in executor.execute(agent_name, agent_input):
+                    if event.type == AgentEventType.TEXT_DELTA:
+                        collected_text.append(event.data.get("text", ""))
+                    yield event
 
             # Record the agent's output into shared state
             output = {"text": "".join(collected_text)}
@@ -79,20 +102,32 @@ class ParallelTopologyExecutor:
         executor: AgentExecutor,
         state: WorkflowState,
         input_data: AgentInput,
+        resilience_configs: dict[str, ResilienceConfig] | None = None,
+        circuit_registry: CircuitBreakerRegistry | None = None,
     ) -> AsyncIterator[AgentEvent]:
         # Collect all events from all agents running in parallel
-        all_events: list[AgentEvent] = []
         agent_texts: dict[str, list[str]] = {name: [] for name in agents}
 
         async def _run_agent(name: str) -> list[AgentEvent]:
-            events: list[AgentEvent] = []
             agent_input = AgentInput(
                 messages=input_data.messages,
                 context={**input_data.context, **state.to_dict()},
                 session_id=input_data.session_id,
             )
-            async for event in executor.execute(name, agent_input):
-                events.append(event)
+            resilience = (resilience_configs or {}).get(name)
+            if resilience and (resilience.retry.max_retries > 0 or resilience.timeout.timeout_seconds or resilience.circuit_breaker_enabled):
+                events = await execute_with_resilience(
+                    agent_name=name,
+                    execute_fn=lambda _name=name, _input=agent_input: executor.execute(_name, _input),
+                    resilience=resilience,
+                    circuit_registry=circuit_registry,
+                )
+            else:
+                events = []
+                async for event in executor.execute(name, agent_input):
+                    events.append(event)
+
+            for event in events:
                 if event.type == AgentEventType.TEXT_DELTA:
                     agent_texts[name].append(event.data.get("text", ""))
             return events
@@ -143,6 +178,8 @@ class GraphTopologyExecutor:
         executor: AgentExecutor,
         state: WorkflowState,
         input_data: AgentInput,
+        resilience_configs: dict[str, ResilienceConfig] | None = None,
+        circuit_registry: CircuitBreakerRegistry | None = None,
     ) -> AsyncIterator[AgentEvent]:
         if not edges:
             raise TopologyError("Graph topology requires at least one edge")
@@ -186,11 +223,26 @@ class GraphTopologyExecutor:
                 context={**input_data.context, **state.to_dict()},
                 session_id=input_data.session_id,
             )
-            collected_text: list[str] = []
-            async for event in executor.execute(current, agent_input):
-                if event.type == AgentEventType.TEXT_DELTA:
-                    collected_text.append(event.data.get("text", ""))
-                yield event
+
+            resilience = (resilience_configs or {}).get(current)
+            if resilience and (resilience.retry.max_retries > 0 or resilience.timeout.timeout_seconds or resilience.circuit_breaker_enabled):
+                events = await execute_with_resilience(
+                    agent_name=current,
+                    execute_fn=lambda _name=current, _input=agent_input: executor.execute(_name, _input),
+                    resilience=resilience,
+                    circuit_registry=circuit_registry,
+                )
+                collected_text: list[str] = []
+                for event in events:
+                    if event.type == AgentEventType.TEXT_DELTA:
+                        collected_text.append(event.data.get("text", ""))
+                    yield event
+            else:
+                collected_text = []
+                async for event in executor.execute(current, agent_input):
+                    if event.type == AgentEventType.TEXT_DELTA:
+                        collected_text.append(event.data.get("text", ""))
+                    yield event
 
             output = {"text": "".join(collected_text)}
             await state.record_agent_output(current, output)
@@ -243,6 +295,8 @@ class HierarchicalTopologyExecutor:
         executor: AgentExecutor,
         state: WorkflowState,
         input_data: AgentInput,
+        resilience_configs: dict[str, ResilienceConfig] | None = None,
+        circuit_registry: CircuitBreakerRegistry | None = None,
     ) -> AsyncIterator[AgentEvent]:
         if len(agents) < 2:
             raise TopologyError(
@@ -253,6 +307,29 @@ class HierarchicalTopologyExecutor:
         supervisor = agents[0]
         workers = agents[1:]
 
+        async def _exec_agent(name: str, inp: AgentInput) -> tuple[list[AgentEvent], list[str]]:
+            """Execute a single agent with optional resilience."""
+            resilience = (resilience_configs or {}).get(name)
+            texts: list[str] = []
+            if resilience and (resilience.retry.max_retries > 0 or resilience.timeout.timeout_seconds or resilience.circuit_breaker_enabled):
+                events = await execute_with_resilience(
+                    agent_name=name,
+                    execute_fn=lambda _n=name, _i=inp: executor.execute(_n, _i),
+                    resilience=resilience,
+                    circuit_registry=circuit_registry,
+                )
+                for ev in events:
+                    if ev.type == AgentEventType.TEXT_DELTA:
+                        texts.append(ev.data.get("text", ""))
+                return events, texts
+            else:
+                events = []
+                async for ev in executor.execute(name, inp):
+                    events.append(ev)
+                    if ev.type == AgentEventType.TEXT_DELTA:
+                        texts.append(ev.data.get("text", ""))
+                return events, texts
+
         # Phase 1: Run supervisor to get delegation decisions
         await state.set_current_agent(supervisor)
         agent_input = AgentInput(
@@ -260,10 +337,8 @@ class HierarchicalTopologyExecutor:
             context={**input_data.context, **state.to_dict()},
             session_id=input_data.session_id,
         )
-        supervisor_text: list[str] = []
-        async for event in executor.execute(supervisor, agent_input):
-            if event.type == AgentEventType.TEXT_DELTA:
-                supervisor_text.append(event.data.get("text", ""))
+        sup_events, supervisor_text = await _exec_agent(supervisor, agent_input)
+        for event in sup_events:
             yield event
 
         supervisor_output = {"text": "".join(supervisor_text)}
@@ -282,10 +357,8 @@ class HierarchicalTopologyExecutor:
                 },
                 session_id=input_data.session_id,
             )
-            worker_text: list[str] = []
-            async for event in executor.execute(worker, worker_input):
-                if event.type == AgentEventType.TEXT_DELTA:
-                    worker_text.append(event.data.get("text", ""))
+            wk_events, worker_text = await _exec_agent(worker, worker_input)
+            for event in wk_events:
                 yield event
 
             output = {"text": "".join(worker_text)}

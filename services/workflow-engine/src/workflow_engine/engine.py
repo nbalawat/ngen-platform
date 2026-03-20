@@ -27,6 +27,10 @@ from workflow_engine.errors import (
 )
 from workflow_engine.governance import GovernanceGuard
 from workflow_engine.models import WorkflowRunStatus
+from workflow_engine.resilience import (
+    CircuitBreakerRegistry,
+    ResilienceConfig,
+)
 from workflow_engine.state import WorkflowState
 from workflow_engine.topology import get_topology_executor
 
@@ -59,12 +63,14 @@ class WorkflowEngine:
         human_approval_timeout: int = 3600,
         default_framework: str = "default",
         governance_guard: GovernanceGuard | None = None,
+        circuit_breaker_registry: CircuitBreakerRegistry | None = None,
     ) -> None:
         self._executor = executor
         self._max_concurrent = max_concurrent
         self._human_approval_timeout = human_approval_timeout
         self._default_framework = default_framework
         self._governance = governance_guard
+        self._circuit_registry = circuit_breaker_registry
         self._runs: dict[str, WorkflowRun] = {}
         self._semaphore = asyncio.Semaphore(max_concurrent)
 
@@ -138,6 +144,9 @@ class WorkflowEngine:
                 hitl = workflow.spec.human_in_the_loop
                 approval_gate = hitl.approval_gate if hitl else None
 
+                # Build per-agent resilience configs from CRD metadata
+                agent_resilience = self._build_resilience_configs(workflow)
+
                 # Execute topology
                 async for event in topo_executor.execute(
                     agents=agent_names,
@@ -145,6 +154,8 @@ class WorkflowEngine:
                     executor=self._executor,
                     state=wf_state,
                     input_data=agent_input,
+                    resilience_configs=agent_resilience,
+                    circuit_registry=self._circuit_registry,
                 ):
                     run.events.append(event)
                     run.updated_at = time.time()
@@ -307,3 +318,12 @@ class WorkflowEngine:
         if status:
             runs = [r for r in runs if r.status == status]
         return runs
+
+    def _build_resilience_configs(
+        self, workflow: WorkflowCRD
+    ) -> dict[str, ResilienceConfig]:
+        """Build per-agent ResilienceConfig from workflow CRD agent metadata."""
+        configs: dict[str, ResilienceConfig] = {}
+        for agent_ref in workflow.spec.agents:
+            configs[agent_ref.ref] = ResilienceConfig.from_metadata(agent_ref.config)
+        return configs
