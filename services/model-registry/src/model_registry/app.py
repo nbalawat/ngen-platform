@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from model_registry.routes import router
+from ngen_common.observability import add_observability
 
 
 def create_app() -> FastAPI:
@@ -13,6 +14,7 @@ def create_app() -> FastAPI:
         return {"status": "healthy"}
 
     application.include_router(router)
+    add_observability(application, service_name="model-registry")
     return application
 
 

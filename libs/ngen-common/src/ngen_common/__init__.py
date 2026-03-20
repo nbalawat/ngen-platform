@@ -18,6 +18,18 @@ from ngen_common.health import (
 )
 from ngen_common.logging import JSONFormatter, get_logger, setup_logging
 from ngen_common.config import DatabaseConfig, ServiceConfig, ServiceURLs
+from ngen_common.observability import (
+    CorrelationIDMiddleware,
+    MetricsStore,
+    RequestMetricsMiddleware,
+    TraceContextFilter,
+    add_observability,
+    get_metrics_store,
+    get_request_id,
+    get_trace_context,
+    reset_metrics_store,
+    set_trace_context,
+)
 
 __all__ = [
     # errors
@@ -42,4 +54,15 @@ __all__ = [
     "ServiceConfig",
     "DatabaseConfig",
     "ServiceURLs",
+    # observability
+    "CorrelationIDMiddleware",
+    "RequestMetricsMiddleware",
+    "MetricsStore",
+    "TraceContextFilter",
+    "add_observability",
+    "get_metrics_store",
+    "reset_metrics_store",
+    "get_trace_context",
+    "set_trace_context",
+    "get_request_id",
 ]

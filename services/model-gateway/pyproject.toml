@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "NGEN Model Gateway — LLM proxy with routing, rate limiting, and cost tracking"
 requires-python = ">=3.12"
 dependencies = [
+    "ngen-common",
     "fastapi>=0.110",
     "uvicorn>=0.27",
     "httpx>=0.27",
@@ -26,3 +27,6 @@ test = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/model_gateway"]
+
+[tool.uv.sources]
+ngen-common = { workspace = true }
