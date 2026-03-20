@@ -1020,28 +1020,13 @@ dependencies = [
     { name = "rich" },
 ]
 
-[package.optional-dependencies]
-dev = [
-    { name = "model-registry" },
-    { name = "ngen-framework-core" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "workflow-engine" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.0,<9.0" },
     { name = "httpx", specifier = ">=0.27,<1.0" },
-    { name = "model-registry", marker = "extra == 'dev'", editable = "services/model-registry" },
-    { name = "ngen-framework-core", marker = "extra == 'dev'", editable = "libs/ngen-framework-core" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "pyyaml", specifier = ">=6.0,<7.0" },
     { name = "rich", specifier = ">=13.0,<14.0" },
-    { name = "workflow-engine", marker = "extra == 'dev'", editable = "services/workflow-engine" },
 ]
-provides-extras = ["dev"]
 
 [[package]]
 name = "ngen-common"
