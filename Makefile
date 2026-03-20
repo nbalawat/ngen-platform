@@ -86,13 +86,15 @@ infra-status: ## Show infrastructure status
 # Docker
 # ---------------------------------------------------------------------------
 
-SERVICES := tenant-service model-registry model-gateway
+SERVICES := tenant-service model-registry model-gateway workflow-engine
 
 docker-build: ## Build Docker images for all services
 	@for svc in $(SERVICES); do \
 		echo "==> Building $$svc..."; \
 		docker build -t ngen/$$svc:latest -f services/$$svc/Dockerfile .; \
 	done
+	@echo "==> Building mock-llm..."
+	@docker build -t ngen/mock-llm:latest -f libs/ngen-mock-llm/Dockerfile .
 	@echo "==> All images built."
 
 # ---------------------------------------------------------------------------
@@ -105,12 +107,34 @@ kind-up: ## Create Kind cluster with ingress
 kind-down: ## Destroy Kind cluster
 	bash scripts/kind-down.sh
 
-deploy-local: ## Deploy all services to local Kind cluster via Helm
+kind-load: ## Load Docker images into Kind cluster
+	@for svc in $(SERVICES) mock-llm; do \
+		echo "==> Loading ngen/$$svc:latest into Kind..."; \
+		kind load docker-image ngen/$$svc:latest --name ngen-platform; \
+	done
+	@echo "==> All images loaded into Kind."
+
+deploy-infra: ## Deploy PostgreSQL and Redis to Kind cluster
+	@echo "==> Deploying PostgreSQL..."
+	@helm upgrade --install postgres infrastructure/helm/charts/postgres \
+		--namespace ngen-system --create-namespace
+	@echo "==> Deploying Redis..."
+	@helm upgrade --install redis infrastructure/helm/charts/redis \
+		--namespace ngen-system --create-namespace
+	@echo "==> Waiting for infra pods..."
+	@kubectl wait --for=condition=ready pod -l app=postgres -n ngen-system --timeout=120s
+	@kubectl wait --for=condition=ready pod -l app=redis -n ngen-system --timeout=120s
+	@echo "==> Infrastructure deployed."
+
+deploy-local: deploy-infra ## Deploy all services to local Kind cluster via Helm
 	@for svc in $(SERVICES) mock-llm; do \
 		echo "==> Deploying $$svc..."; \
 		helm upgrade --install $$svc infrastructure/helm/charts/$$svc \
 			--namespace ngen-system --create-namespace; \
 	done
+	@echo "==> Deploying ingress..."
+	@helm upgrade --install ngen-ingress infrastructure/helm/charts/ingress \
+		--namespace ngen-system --create-namespace
 	@echo "==> All services deployed."
 	@kubectl get pods -n ngen-system
 

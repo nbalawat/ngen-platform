@@ -1,0 +1,16 @@
+ingress:
+  className: nginx
+  host: ngen.local
+  services:
+    - path: /api/v1/tenants
+      name: tenant-service
+      port: 8000
+    - path: /api/v1/models
+      name: model-registry
+      port: 8001
+    - path: /api/v1/gateway
+      name: model-gateway
+      port: 8002
+    - path: /workflows
+      name: workflow-engine
+      port: 8003

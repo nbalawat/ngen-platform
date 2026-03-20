@@ -1,0 +1,22 @@
+replicaCount: 1
+
+image:
+  repository: ngen/workflow-engine
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8003
+
+env:
+  WF_MODEL_GATEWAY_URL: "http://model-gateway:8002"
+  WF_LOG_LEVEL: "INFO"
+
+resources: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
