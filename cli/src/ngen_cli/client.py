@@ -20,11 +20,15 @@ class NgenClient:
         workflow_url: str = "http://localhost:8003",
         registry_url: str = "http://localhost:8002",
         gateway_url: str = "http://localhost:8001",
+        governance_url: str = "http://localhost:8004",
+        mcp_url: str = "http://localhost:8005",
         timeout: float = 300.0,
     ) -> None:
         self.workflow_url = workflow_url.rstrip("/")
         self.registry_url = registry_url.rstrip("/")
         self.gateway_url = gateway_url.rstrip("/")
+        self.governance_url = governance_url.rstrip("/")
+        self.mcp_url = mcp_url.rstrip("/")
         self.timeout = timeout
 
     # -- Workflow Engine -----------------------------------------------------
@@ -159,6 +163,85 @@ class NgenClient:
                 f"{self.registry_url}/api/v1/models/{model_id}"
             )
             resp.raise_for_status()
+
+    # -- Governance -----------------------------------------------------------
+
+    async def create_policy(self, data: dict[str, Any]) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(f"{self.governance_url}/api/v1/policies", json=data)
+            resp.raise_for_status()
+            return resp.json()
+
+    async def list_policies(self, namespace: str | None = None) -> list[dict[str, Any]]:
+        params = {}
+        if namespace:
+            params["namespace"] = namespace
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.get(f"{self.governance_url}/api/v1/policies", params=params)
+            resp.raise_for_status()
+            return resp.json()
+
+    async def get_policy(self, policy_id: str) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.get(f"{self.governance_url}/api/v1/policies/{policy_id}")
+            resp.raise_for_status()
+            return resp.json()
+
+    async def delete_policy(self, policy_id: str) -> None:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.delete(f"{self.governance_url}/api/v1/policies/{policy_id}")
+            resp.raise_for_status()
+
+    async def evaluate_policy(self, context: dict[str, Any]) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(f"{self.governance_url}/api/v1/evaluate", json=context)
+            resp.raise_for_status()
+            return resp.json()
+
+    # -- MCP Manager ----------------------------------------------------------
+
+    async def register_server(self, data: dict[str, Any]) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(f"{self.mcp_url}/api/v1/servers", json=data)
+            resp.raise_for_status()
+            return resp.json()
+
+    async def list_servers(self, namespace: str | None = None) -> list[dict[str, Any]]:
+        params = {}
+        if namespace:
+            params["namespace"] = namespace
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.get(f"{self.mcp_url}/api/v1/servers", params=params)
+            resp.raise_for_status()
+            return resp.json()
+
+    async def list_tools(self, server_name: str | None = None, tag: str | None = None) -> list[dict[str, Any]]:
+        params = {}
+        if server_name:
+            params["server_name"] = server_name
+        if tag:
+            params["tag"] = tag
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.get(f"{self.mcp_url}/api/v1/tools", params=params)
+            resp.raise_for_status()
+            return resp.json()
+
+    async def search_tools(self, query: str) -> list[dict[str, Any]]:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.get(f"{self.mcp_url}/api/v1/tools/search", params={"q": query})
+            resp.raise_for_status()
+            return resp.json()
+
+    async def invoke_tool(self, server_name: str, tool_name: str, arguments: dict[str, Any] | None = None, namespace: str = "default") -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(f"{self.mcp_url}/api/v1/invoke", json={
+                "server_name": server_name,
+                "tool_name": tool_name,
+                "arguments": arguments or {},
+                "namespace": namespace,
+            })
+            resp.raise_for_status()
+            return resp.json()
 
     # -- Health ---------------------------------------------------------------
 

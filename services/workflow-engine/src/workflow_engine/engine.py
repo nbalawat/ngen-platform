@@ -25,6 +25,7 @@ from workflow_engine.errors import (
     HumanApprovalTimeout,
     WorkflowNotFoundError,
 )
+from workflow_engine.governance import GovernanceGuard
 from workflow_engine.models import WorkflowRunStatus
 from workflow_engine.state import WorkflowState
 from workflow_engine.topology import get_topology_executor
@@ -57,11 +58,13 @@ class WorkflowEngine:
         max_concurrent: int = 50,
         human_approval_timeout: int = 3600,
         default_framework: str = "default",
+        governance_guard: GovernanceGuard | None = None,
     ) -> None:
         self._executor = executor
         self._max_concurrent = max_concurrent
         self._human_approval_timeout = human_approval_timeout
         self._default_framework = default_framework
+        self._governance = governance_guard
         self._runs: dict[str, WorkflowRun] = {}
         self._semaphore = asyncio.Semaphore(max_concurrent)
 
@@ -92,6 +95,12 @@ class WorkflowEngine:
                 run.status = WorkflowRunStatus.RUNNING
                 run.updated_at = time.time()
 
+                # Set governance namespace from workflow metadata
+                if self._governance:
+                    ns = workflow.metadata.namespace or "default"
+                    self._governance.set_namespace(ns)
+                    self._governance.reset()
+
                 # Create agents from workflow spec
                 agent_names = await self._create_agents(workflow)
 
@@ -104,6 +113,26 @@ class WorkflowEngine:
                     context=input_data or {},
                     session_id=session_id,
                 )
+
+                # Pre-execution governance check on input
+                if self._governance:
+                    for agent_name in agent_names:
+                        guard_events = await self._governance.check_input(
+                            agent_name, agent_input
+                        )
+                        for ge in guard_events:
+                            run.events.append(ge)
+                            yield ge
+
+                    if self._governance.is_blocked():
+                        run.status = WorkflowRunStatus.FAILED
+                        run.error = "Blocked by governance policy"
+                        run.updated_at = time.time()
+                        yield AgentEvent(
+                            type=AgentEventType.ERROR,
+                            data={"error": "Workflow blocked by governance policy"},
+                        )
+                        return
 
                 # Check for HITL gate
                 hitl = workflow.spec.human_in_the_loop
@@ -119,6 +148,34 @@ class WorkflowEngine:
                 ):
                     run.events.append(event)
                     run.updated_at = time.time()
+
+                    # Post-event governance check on tool calls
+                    if (
+                        self._governance
+                        and event.type == AgentEventType.TOOL_CALL_START
+                        and "tool" in event.data
+                    ):
+                        tool_events = await self._governance.check_tool(
+                            event.agent_name or "", event.data["tool"]
+                        )
+                        for te in tool_events:
+                            run.events.append(te)
+                            yield te
+
+                    # Post-event governance check on agent output
+                    if (
+                        self._governance
+                        and event.type == AgentEventType.TEXT_DELTA
+                        and event.data.get("text")
+                    ):
+                        output_events = await self._governance.check_output(
+                            event.agent_name or "",
+                            event.data["text"],
+                        )
+                        for oe in output_events:
+                            run.events.append(oe)
+                            yield oe
+
                     yield event
 
                     # Check if we need to pause for HITL approval

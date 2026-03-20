@@ -10,6 +10,7 @@ from ngen_framework_core.executor import AgentExecutor
 
 from workflow_engine.config import Settings
 from workflow_engine.engine import WorkflowEngine
+from workflow_engine.governance import GovernanceGuard
 from workflow_engine.routes import router
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,7 @@ def create_app(
     executor: AgentExecutor | None = None,
     settings: Settings | None = None,
     default_framework: str = "default",
+    governance_guard: GovernanceGuard | None = None,
 ) -> FastAPI:
     """Create and configure the Workflow Engine FastAPI application.
 
@@ -26,6 +28,7 @@ def create_app(
         executor: AgentExecutor instance. Creates a default one if not provided.
         settings: Application settings. Loads from env if not provided.
         default_framework: Framework name for agent creation.
+        governance_guard: Optional GovernanceGuard for policy enforcement.
     """
     _settings = settings or Settings()
     _executor = executor or AgentExecutor()
@@ -44,6 +47,7 @@ def create_app(
         max_concurrent=_settings.MAX_CONCURRENT_RUNS,
         human_approval_timeout=_settings.HUMAN_APPROVAL_TIMEOUT,
         default_framework=default_framework,
+        governance_guard=governance_guard,
     )
 
     app.include_router(router)
