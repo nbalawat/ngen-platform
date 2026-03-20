@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ngen.io/schemas/agent.schema.json",
+  "title": "NGEN Agent CRD",
+  "description": "Schema for Agent custom resource definitions in the NGEN multi-agent platform",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "enum": ["ngen.io/v1", "ngen.io/v1beta1", "ngen.io/v1alpha1"]
+    },
+    "kind": {
+      "type": "string",
+      "const": "Agent"
+    },
+    "metadata": { "$ref": "#/$defs/metadata" },
+    "spec": {
+      "type": "object",
+      "required": ["framework", "model", "systemPrompt"],
+      "properties": {
+        "framework": {
+          "type": "string",
+          "enum": ["langgraph", "claude-agent-sdk", "crewai", "adk", "ms-agent-framework"]
+        },
+        "model": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string" },
+            "fallback": { "type": "string" },
+            "parameters": { "type": "object" }
+          }
+        },
+        "systemPrompt": { "type": "string" },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "mcpServer": { "type": "string" },
+              "handler": { "type": "string" },
+              "config": { "type": "object" }
+            }
+          }
+        },
+        "guardrails": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "scaling": { "$ref": "#/$defs/scaling" },
+        "observability": { "$ref": "#/$defs/observability" },
+        "memory": { "type": "object" },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "decisionLoop": { "$ref": "#/$defs/decisionLoop" },
+        "state": { "$ref": "#/$defs/state" },
+        "actionGuards": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/actionGuard" }
+        },
+        "escalation": { "$ref": "#/$defs/escalation" },
+        "eval": { "$ref": "#/$defs/eval" },
+        "cost": { "$ref": "#/$defs/cost" },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "metadata": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9\\-]*$",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "namespace": { "type": "string" },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "scaling": {
+      "type": "object",
+      "properties": {
+        "minReplicas": { "type": "integer", "minimum": 0, "default": 1 },
+        "maxReplicas": { "type": "integer", "minimum": 1, "default": 10 }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "properties": {
+        "tracing": { "type": "boolean", "default": true },
+        "costTracking": { "type": "boolean", "default": true },
+        "customMetrics": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "decisionLoop": {
+      "type": "object",
+      "properties": {
+        "maxTurns": { "type": "integer", "default": 25 },
+        "exitConditions": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "state": {
+      "type": "object",
+      "properties": {
+        "persistence": { "type": "string", "enum": ["memory", "redis", "postgres"], "default": "memory" },
+        "ttlSeconds": { "type": "integer" }
+      }
+    },
+    "actionGuard": {
+      "type": "object",
+      "required": ["tool", "policy"],
+      "properties": {
+        "tool": { "type": "string" },
+        "policy": { "type": "string" },
+        "config": { "type": "object" }
+      }
+    },
+    "escalation": {
+      "type": "object",
+      "properties": {
+        "target": { "type": "string" },
+        "conditions": { "type": "array", "items": { "type": "string" } },
+        "timeoutSeconds": { "type": "integer", "default": 3600 }
+      }
+    },
+    "eval": {
+      "type": "object",
+      "properties": {
+        "dimensions": { "type": "array", "items": { "type": "string" } },
+        "threshold": { "type": "number", "default": 0.8 },
+        "datasetRef": { "type": "string" }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "properties": {
+        "maxCostPerInvocation": { "type": "number" },
+        "dailyBudget": { "type": "number" },
+        "alertThreshold": { "type": "number", "default": 0.8 }
+      }
+    }
+  }
+}

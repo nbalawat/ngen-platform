@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ngen.io/schemas/memory.schema.json",
+  "title": "NGEN Memory CRD",
+  "description": "Schema for Memory custom resource definitions — declarative multi-tenant agent memory configuration",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "enum": ["ngen.io/v1", "ngen.io/v1beta1", "ngen.io/v1alpha1"]
+    },
+    "kind": {
+      "type": "string",
+      "const": "Memory"
+    },
+    "metadata": { "$ref": "#/$defs/metadata" },
+    "spec": {
+      "type": "object",
+      "properties": {
+        "memoryTypes": {
+          "type": "array",
+          "description": "Which memory types to enable and their per-type configuration",
+          "items": { "$ref": "#/$defs/memoryTypeConfig" }
+        },
+        "embeddingModel": {
+          "type": "string",
+          "description": "Embedding model for semantic search (e.g., sentence-transformers/paraphrase-mpnet-base-v2)"
+        },
+        "contextBudgetTokens": {
+          "type": "integer",
+          "minimum": 100,
+          "default": 4000,
+          "description": "Maximum tokens for the assembled context window"
+        },
+        "defaultBackend": {
+          "type": "string",
+          "default": "redis",
+          "description": "Default storage backend (redis, pgvector, in-memory, etc.)"
+        },
+        "defaultPolicy": {
+          "$ref": "#/$defs/memoryPolicy",
+          "description": "Default retention policy applied to all memory types unless overridden"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "metadata": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9\\-]*$",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "namespace": { "type": "string" },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "memoryPolicy": {
+      "type": "object",
+      "properties": {
+        "maxEntries": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of entries before oldest are clipped"
+        },
+        "ttlSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Time-to-live for entries in seconds"
+        },
+        "summarizationThreshold": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of conversational messages before auto-summarization triggers"
+        },
+        "retentionDays": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of days to retain entries before deletion"
+        }
+      }
+    },
+    "memoryTypeConfig": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["conversational", "knowledge_base", "workflow", "toolbox", "entity", "summary", "tool_log"],
+          "description": "Memory type identifier"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "backend": {
+          "type": "string",
+          "description": "Override the default backend for this memory type"
+        },
+        "policy": {
+          "$ref": "#/$defs/memoryPolicy",
+          "description": "Per-type retention policy override"
+        }
+      }
+    }
+  }
+}

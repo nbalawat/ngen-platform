@@ -1,0 +1,72 @@
+[project]
+name = "ngen-platform"
+version = "0.1.0"
+description = "Next-Gen Multi-Agent Platform"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+    "ngen-framework-core",
+    "ngen-mock-llm",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+
+[tool.uv.workspace]
+members = [
+    "libs/ngen-framework-core",
+    "libs/ngen-mock-llm",
+    "libs/ngen-common",
+    "libs/ngen-sdk",
+    "adapters/langgraph-adapter",
+    "adapters/google-adk-adapter",
+    "adapters/ms-agent-framework-adapter",
+    "adapters/crewai-adapter",
+    "adapters/claude-agent-sdk-adapter",
+    "services/tenant-service",
+    "services/model-registry",
+    "services/model-gateway",
+    "services/workflow-engine",
+    "services/mcp-manager",
+    "services/governance-service",
+    "services/onboarding-agent",
+    "cli",
+]
+
+[tool.uv.sources]
+ngen-framework-core = { workspace = true }
+ngen-mock-llm = { workspace = true }
+ngen-common = { workspace = true }
+ngen-sdk = { workspace = true }
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--strict-markers -v --import-mode=importlib"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.coverage.run]
+source = ["libs", "services", "adapters", "cli"]
+omit = ["*/tests/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true

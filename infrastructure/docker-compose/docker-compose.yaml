@@ -1,0 +1,122 @@
+services:
+  # ---------------------------------------------------------------------------
+  # Infrastructure
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: ngen-postgres
+    environment:
+      POSTGRES_DB: ngen
+      POSTGRES_USER: ngen
+      POSTGRES_PASSWORD: ngen_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ngen"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: ngen-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  nats:
+    image: nats:2-alpine
+    container_name: ngen-nats
+    ports:
+      - "4222:4222"   # Client
+      - "8222:8222"   # Monitoring
+    command: ["--jetstream", "--store_dir", "/data", "-m", "8222"]
+    volumes:
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Mock LLM Provider (for local dev / testing)
+  # ---------------------------------------------------------------------------
+  mock-llm:
+    build:
+      context: ../..
+      dockerfile: libs/ngen-mock-llm/Dockerfile
+    container_name: ngen-mock-llm
+    ports:
+      - "9100:9100"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9100/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Application Services
+  # ---------------------------------------------------------------------------
+  tenant-service:
+    build:
+      context: ../..
+      dockerfile: services/tenant-service/Dockerfile
+    container_name: ngen-tenant-service
+    environment:
+      NGEN_DATABASE_URL: postgresql+asyncpg://ngen:ngen_dev_password@postgres:5432/ngen
+      NGEN_DEBUG: "true"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  model-registry:
+    build:
+      context: ../..
+      dockerfile: services/model-registry/Dockerfile
+    container_name: ngen-model-registry
+    environment:
+      NGEN_REGISTRY_DEBUG: "true"
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  model-gateway:
+    build:
+      context: ../..
+      dockerfile: services/model-gateway/Dockerfile
+    container_name: ngen-model-gateway
+    environment:
+      NGEN_GATEWAY_DEFAULT_UPSTREAM_URL: http://mock-llm:9100
+      NGEN_GATEWAY_DEBUG: "true"
+    ports:
+      - "8002:8002"
+    depends_on:
+      mock-llm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  nats_data:

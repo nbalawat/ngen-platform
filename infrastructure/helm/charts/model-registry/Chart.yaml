@@ -1,0 +1,6 @@
+apiVersion: v2
+name: model-registry
+description: NGEN Platform Model Registry
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,21 @@
+replicaCount: 1
+
+image:
+  repository: ngen/model-registry
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8001
+
+env:
+  NGEN_DATABASE_URL: "postgresql+asyncpg://ngen:ngen_dev_password@postgres:5432/ngen"
+
+resources: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

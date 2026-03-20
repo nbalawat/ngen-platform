@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ngen.io/schemas/tool.schema.json",
+  "title": "NGEN Tool CRD",
+  "description": "Schema for Tool custom resource definitions — deterministic, stateless platform components",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "enum": ["ngen.io/v1", "ngen.io/v1beta1", "ngen.io/v1alpha1"]
+    },
+    "kind": {
+      "type": "string",
+      "const": "Tool"
+    },
+    "metadata": { "$ref": "#/$defs/metadata" },
+    "spec": {
+      "type": "object",
+      "required": ["handler"],
+      "properties": {
+        "handler": {
+          "type": "string",
+          "description": "Python dotted path to handler function or MCP server reference"
+        },
+        "inputSchema": {
+          "type": "object",
+          "description": "JSON Schema for tool input"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "JSON Schema for tool output"
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 30000
+        },
+        "idempotent": {
+          "type": "boolean",
+          "default": false
+        },
+        "healthCheck": {
+          "type": "string",
+          "description": "Health check endpoint or function path"
+        },
+        "mcpServer": {
+          "type": "string",
+          "description": "MCP server name if tool is backed by MCP"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "metadata": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9\\-]*$",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "namespace": { "type": "string" },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    }
+  }
+}

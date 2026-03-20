@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ngen.io/schemas/model.schema.json",
+  "title": "NGEN Model CRD",
+  "description": "Schema for Model custom resource definitions in the NGEN multi-agent platform",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "enum": ["ngen.io/v1", "ngen.io/v1beta1", "ngen.io/v1alpha1"]
+    },
+    "kind": {
+      "type": "string",
+      "const": "Model"
+    },
+    "metadata": { "$ref": "agent.schema.json#/$defs/metadata" },
+    "spec": {
+      "type": "object",
+      "required": ["provider", "endpoint"],
+      "properties": {
+        "provider": { "type": "string" },
+        "endpoint": { "type": "string", "format": "uri" },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "costPerMToken": {
+          "type": "object",
+          "properties": {
+            "input": { "type": "number", "minimum": 0 },
+            "output": { "type": "number", "minimum": 0 }
+          }
+        },
+        "contextWindow": { "type": "integer", "minimum": 1 },
+        "maxOutputTokens": { "type": "integer", "minimum": 1 },
+        "parameters": { "type": "object" }
+      }
+    }
+  }
+}

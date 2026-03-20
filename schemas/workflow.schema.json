@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ngen.io/schemas/workflow.schema.json",
+  "title": "NGEN Workflow CRD",
+  "description": "Schema for Workflow custom resource definitions in the NGEN multi-agent platform",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "enum": ["ngen.io/v1", "ngen.io/v1beta1", "ngen.io/v1alpha1"]
+    },
+    "kind": {
+      "type": "string",
+      "const": "Workflow"
+    },
+    "metadata": { "$ref": "agent.schema.json#/$defs/metadata" },
+    "spec": {
+      "type": "object",
+      "required": ["agents", "topology"],
+      "properties": {
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["ref"],
+            "properties": {
+              "ref": { "type": "string" },
+              "config": { "type": "object" }
+            }
+          }
+        },
+        "topology": {
+          "type": "string",
+          "enum": ["sequential", "parallel", "graph", "hierarchical"]
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to"],
+            "properties": {
+              "from": { "type": "string" },
+              "to": { "type": "string" },
+              "condition": { "type": "string" }
+            }
+          }
+        },
+        "humanInTheLoop": {
+          "type": "object",
+          "properties": {
+            "approvalGate": { "type": "string" },
+            "timeoutSeconds": { "type": "integer", "default": 3600 },
+            "escalation": { "type": "string" }
+          }
+        },
+        "stateSchema": { "type": "object" },
+        "observability": { "$ref": "agent.schema.json#/$defs/observability" }
+      }
+    }
+  }
+}

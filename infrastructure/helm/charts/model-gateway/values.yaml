@@ -1,0 +1,22 @@
+replicaCount: 1
+
+image:
+  repository: ngen/model-gateway
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8002
+
+env:
+  NGEN_DATABASE_URL: "postgresql+asyncpg://ngen:ngen_dev_password@postgres:5432/ngen"
+  NGEN_GATEWAY_DEFAULT_UPSTREAM_URL: "http://mock-llm:9100"
+
+resources: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

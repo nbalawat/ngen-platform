@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ngen.io/schemas/skill.schema.json",
+  "title": "NGEN Skill CRD",
+  "description": "Schema for Skill custom resource definitions — LLM-powered, single-shot platform components",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "enum": ["ngen.io/v1", "ngen.io/v1beta1", "ngen.io/v1alpha1"]
+    },
+    "kind": {
+      "type": "string",
+      "const": "Skill"
+    },
+    "metadata": { "$ref": "#/$defs/metadata" },
+    "spec": {
+      "type": "object",
+      "required": ["model", "systemPrompt"],
+      "properties": {
+        "model": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string" },
+            "fallback": { "type": "string" },
+            "parameters": { "type": "object" }
+          }
+        },
+        "systemPrompt": { "type": "string" },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "mcpServer": { "type": "string" },
+              "handler": { "type": "string" },
+              "config": { "type": "object" }
+            }
+          }
+        },
+        "guardrails": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "JSON Schema for skill output"
+        },
+        "eval": { "$ref": "#/$defs/eval" },
+        "cost": { "$ref": "#/$defs/cost" },
+        "scaling": { "$ref": "#/$defs/scaling" },
+        "observability": { "$ref": "#/$defs/observability" }
+      }
+    }
+  },
+  "$defs": {
+    "metadata": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9\\-]*$",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "namespace": { "type": "string" },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "eval": {
+      "type": "object",
+      "properties": {
+        "dimensions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "threshold": { "type": "number", "default": 0.8 },
+        "datasetRef": { "type": "string" }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "properties": {
+        "maxCostPerInvocation": { "type": "number" },
+        "dailyBudget": { "type": "number" },
+        "alertThreshold": { "type": "number", "default": 0.8 }
+      }
+    },
+    "scaling": {
+      "type": "object",
+      "properties": {
+        "minReplicas": { "type": "integer", "minimum": 0, "default": 1 },
+        "maxReplicas": { "type": "integer", "minimum": 1, "default": 10 }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "properties": {
+        "tracing": { "type": "boolean", "default": true },
+        "costTracking": { "type": "boolean", "default": true },
+        "customMetrics": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

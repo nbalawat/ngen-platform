@@ -1,0 +1,21 @@
+replicaCount: 1
+
+image:
+  repository: ngen/tenant-service
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+env:
+  NGEN_DATABASE_URL: "postgresql+asyncpg://ngen:ngen_dev_password@postgres:5432/ngen"
+
+resources: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
