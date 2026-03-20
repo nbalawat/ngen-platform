@@ -26,6 +26,8 @@ from ngen_framework_core.registry import AdapterRegistry
 from model_registry.app import create_app as create_registry_app
 from workflow_engine.app import create_app as create_workflow_app
 from workflow_engine.config import Settings
+from governance_service.app import create_app as create_governance_app
+from mcp_manager.app import create_app as create_mcp_app
 
 from ngen_cli.client import NgenClient
 
@@ -150,5 +152,42 @@ async def registry_client(registry_app) -> AsyncIterator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=registry_app)
     async with httpx.AsyncClient(
         transport=transport, base_url="http://model-registry"
+    ) as client:
+        yield client
+
+
+@pytest.fixture()
+def governance_app():
+    """Create a real governance-service FastAPI app with fresh state."""
+    import governance_service.routes as gov_routes
+    gov_routes._repository = None
+    gov_routes._engine = None
+    return create_governance_app()
+
+
+@pytest.fixture()
+def mcp_app():
+    """Create a real mcp-manager FastAPI app with fresh state."""
+    import mcp_manager.routes as mcp_routes
+    mcp_routes._repository = None
+    return create_mcp_app()
+
+
+@pytest.fixture()
+async def governance_client(governance_app) -> AsyncIterator[httpx.AsyncClient]:
+    """Direct httpx client for the governance service."""
+    transport = httpx.ASGITransport(app=governance_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://governance-service"
+    ) as client:
+        yield client
+
+
+@pytest.fixture()
+async def mcp_client(mcp_app) -> AsyncIterator[httpx.AsyncClient]:
+    """Direct httpx client for the MCP manager."""
+    transport = httpx.ASGITransport(app=mcp_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://mcp-manager"
     ) as client:
         yield client

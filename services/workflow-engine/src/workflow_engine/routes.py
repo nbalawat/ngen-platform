@@ -96,6 +96,19 @@ async def run_workflow_stream(body: WorkflowRunRequest, request: Request) -> Str
     engine = _get_engine(request)
     workflow = _parse_workflow(body)
 
+    _sentinel = object()
+
+    async def _next_event(aiter):
+        """Wrap __anext__ so StopAsyncIteration becomes a sentinel value.
+
+        StopAsyncIteration can't propagate through asyncio.Task, so we
+        catch it here and return a sentinel instead.
+        """
+        try:
+            return await aiter.__anext__()
+        except StopAsyncIteration:
+            return _sentinel
+
     async def event_stream():
         run_id = None
         try:
@@ -104,16 +117,24 @@ async def run_workflow_stream(body: WorkflowRunRequest, request: Request) -> Str
                 input_data=body.input_data,
                 session_id=body.session_id,
             )
+            # We keep a pending task so keepalive timeouts don't cancel
+            # the generator (critical for HITL approval waits).
+            pending: asyncio.Task | None = None
             while True:
-                try:
-                    event = await asyncio.wait_for(
-                        aiter.__anext__(), timeout=KEEPALIVE_INTERVAL
-                    )
-                except StopAsyncIteration:
-                    break
-                except asyncio.TimeoutError:
+                if pending is None:
+                    pending = asyncio.ensure_future(_next_event(aiter))
+                done, _ = await asyncio.wait(
+                    {pending}, timeout=KEEPALIVE_INTERVAL
+                )
+                if not done:
+                    # Timeout — send keepalive, keep the pending task
                     yield format_keepalive()
                     continue
+                result = pending.result()
+                pending = None
+                if result is _sentinel:
+                    break
+                event = result
 
                 # Capture the run_id from the first event's engine state
                 if run_id is None:

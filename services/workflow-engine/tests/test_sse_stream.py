@@ -164,3 +164,64 @@ class TestStreamRunTracked:
         get_resp = await client.get(f"/workflows/runs/{run_id}")
         assert get_resp.status_code == 200
         assert get_resp.json()["run_id"] == run_id
+
+
+class TestStreamHITLApproval:
+    async def test_hitl_approval_via_engine(self, engine, make_crd):
+        """Verify HITL approval flow at the engine level.
+
+        httpx ASGI transport buffers entire SSE responses, making it
+        impossible to test concurrent stream + approve via HTTP. Instead,
+        we test the engine's async iterator directly with concurrent approval.
+        """
+        from ngen_framework_core.protocols import AgentEventType
+
+        crd = make_crd(
+            agents=["agent-a", "agent-b"],
+            topology=TopologyType.SEQUENTIAL,
+            hitl_gate="agent-a",
+        )
+        events: list = []
+        run_id_holder: list[str] = []
+
+        async def collect_events():
+            async for event in engine.run_workflow(
+                workflow=crd, input_data={"query": "test"}
+            ):
+                events.append(event)
+                # Capture run_id from engine state
+                if not run_id_holder:
+                    runs = engine.list_runs()
+                    if runs:
+                        run_id_holder.append(runs[-1].run_id)
+
+        async def approve_when_waiting():
+            for _ in range(200):
+                await asyncio.sleep(0.02)
+                escalations = [
+                    e for e in events
+                    if e.type == AgentEventType.ESCALATION and "gate" in e.data
+                ]
+                if escalations and run_id_holder:
+                    engine.approve_run(run_id_holder[0])
+                    return
+
+        await asyncio.gather(collect_events(), approve_when_waiting())
+
+        # Should have an escalation event for the HITL gate
+        escalations = [
+            e for e in events
+            if e.type == AgentEventType.ESCALATION and "gate" in e.data
+        ]
+        assert len(escalations) == 1
+        assert escalations[0].data["gate"] == "agent-a"
+
+        # Should complete after approval — both agents should have run
+        done_events = [e for e in events if e.type == AgentEventType.DONE]
+        agent_names = {e.agent_name for e in done_events}
+        assert "agent-a" in agent_names
+        assert "agent-b" in agent_names
+
+        # Run should be completed
+        run = engine.get_run(run_id_holder[0])
+        assert run.status.value == "completed"
