@@ -117,6 +117,25 @@ services:
       timeout: 5s
       retries: 5
 
+  workflow-engine:
+    build:
+      context: ../..
+      dockerfile: services/workflow-engine/Dockerfile
+    container_name: ngen-workflow-engine
+    environment:
+      WF_MODEL_GATEWAY_URL: http://model-gateway:8002
+      WF_LOG_LEVEL: INFO
+    ports:
+      - "8003:8003"
+    depends_on:
+      model-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
   nats_data:
