@@ -14,3 +14,9 @@ ingress:
     - path: /workflows
       name: workflow-engine
       port: 8003
+    - path: /api/v1/policies
+      name: governance-service
+      port: 8004
+    - path: /api/v1/evaluate
+      name: governance-service
+      port: 8004

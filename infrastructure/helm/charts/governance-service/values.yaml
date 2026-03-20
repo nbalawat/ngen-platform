@@ -1,0 +1,20 @@
+replicaCount: 1
+
+image:
+  repository: ngen/governance-service
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8004
+
+env: {}
+
+resources: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
