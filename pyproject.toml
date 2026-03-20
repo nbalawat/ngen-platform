@@ -7,11 +7,17 @@ license = "MIT"
 dependencies = [
     "ngen-framework-core",
     "ngen-mock-llm",
+    "ngen-common",
+    "ngen-sdk",
     "ngen-cli",
     "workflow-engine",
     "model-registry",
     "model-gateway",
     "tenant-service",
+    "governance-service",
+    "mcp-manager",
+    "crewai-adapter",
+    "claude-agent-sdk-adapter",
 ]
 
 [project.optional-dependencies]
@@ -55,6 +61,10 @@ workflow-engine = { workspace = true }
 model-registry = { workspace = true }
 model-gateway = { workspace = true }
 tenant-service = { workspace = true }
+governance-service = { workspace = true }
+mcp-manager = { workspace = true }
+crewai-adapter = { workspace = true }
+claude-agent-sdk-adapter = { workspace = true }
 
 [tool.ruff]
 target-version = "py311"

@@ -136,6 +136,36 @@ services:
       timeout: 5s
       retries: 5
 
+  governance-service:
+    build:
+      context: ../..
+      dockerfile: services/governance-service/Dockerfile
+    container_name: ngen-governance-service
+    environment:
+      NGEN_GOVERNANCE_DEBUG: "true"
+    ports:
+      - "8004:8004"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mcp-manager:
+    build:
+      context: ../..
+      dockerfile: services/mcp-manager/Dockerfile
+    container_name: ngen-mcp-manager
+    environment:
+      NGEN_MCP_DEBUG: "true"
+    ports:
+      - "8005:8005"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
   nats_data:

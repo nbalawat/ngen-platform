@@ -1036,8 +1036,19 @@ dependencies = [
     { name = "pydantic" },
 ]
 
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
 [package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.0,<3.0" }]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.0,<3.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "ngen-framework-core"
@@ -1108,11 +1119,17 @@ name = "ngen-platform"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "claude-agent-sdk-adapter" },
+    { name = "crewai-adapter" },
+    { name = "governance-service" },
+    { name = "mcp-manager" },
     { name = "model-gateway" },
     { name = "model-registry" },
     { name = "ngen-cli" },
+    { name = "ngen-common" },
     { name = "ngen-framework-core" },
     { name = "ngen-mock-llm" },
+    { name = "ngen-sdk" },
     { name = "tenant-service" },
     { name = "workflow-engine" },
 ]
@@ -1130,12 +1147,18 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", marker = "extra == 'dev'", specifier = ">=0.20" },
+    { name = "claude-agent-sdk-adapter", editable = "adapters/claude-agent-sdk-adapter" },
+    { name = "crewai-adapter", editable = "adapters/crewai-adapter" },
+    { name = "governance-service", editable = "services/governance-service" },
+    { name = "mcp-manager", editable = "services/mcp-manager" },
     { name = "model-gateway", editable = "services/model-gateway" },
     { name = "model-registry", editable = "services/model-registry" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "ngen-cli", editable = "cli" },
+    { name = "ngen-common", editable = "libs/ngen-common" },
     { name = "ngen-framework-core", editable = "libs/ngen-framework-core" },
     { name = "ngen-mock-llm", editable = "libs/ngen-mock-llm" },
+    { name = "ngen-sdk", editable = "libs/ngen-sdk" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
