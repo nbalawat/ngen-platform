@@ -20,3 +20,12 @@ ingress:
     - path: /api/v1/evaluate
       name: governance-service
       port: 8004
+    - path: /api/v1/servers
+      name: mcp-manager
+      port: 8005
+    - path: /api/v1/tools
+      name: mcp-manager
+      port: 8005
+    - path: /api/v1/invoke
+      name: mcp-manager
+      port: 8005

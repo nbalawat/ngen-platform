@@ -86,7 +86,7 @@ infra-status: ## Show infrastructure status
 # Docker
 # ---------------------------------------------------------------------------
 
-SERVICES := tenant-service model-registry model-gateway workflow-engine governance-service
+SERVICES := tenant-service model-registry model-gateway workflow-engine governance-service mcp-manager
 
 docker-build: ## Build Docker images for all services
 	@for svc in $(SERVICES); do \

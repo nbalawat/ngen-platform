@@ -1,0 +1,20 @@
+replicaCount: 1
+
+image:
+  repository: ngen/mcp-manager
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8005
+
+env: {}
+
+resources: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
