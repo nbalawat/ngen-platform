@@ -30,6 +30,19 @@ from ngen_common.observability import (
     reset_metrics_store,
     set_trace_context,
 )
+from ngen_common.auth import (
+    APIKeyStore,
+    AuthConfig,
+    AuthIdentity,
+    AuthMiddleware,
+    AuthMode,
+    JWTError,
+    JWTValidator,
+    add_auth,
+    create_jwt,
+    require_role,
+    require_scope,
+)
 
 __all__ = [
     # errors
@@ -65,4 +78,16 @@ __all__ = [
     "get_trace_context",
     "set_trace_context",
     "get_request_id",
+    # auth
+    "APIKeyStore",
+    "AuthConfig",
+    "AuthIdentity",
+    "AuthMiddleware",
+    "AuthMode",
+    "JWTError",
+    "JWTValidator",
+    "add_auth",
+    "create_jwt",
+    "require_role",
+    "require_scope",
 ]
