@@ -7,6 +7,12 @@ import { ToolCatalogPage } from './pages/tenant/discover/ToolCatalogPage';
 import { AgentListPage } from './pages/tenant/agents/AgentListPage';
 import { AgentCreatePage } from './pages/tenant/agents/AgentCreatePage';
 import { AgentTestBench } from './pages/tenant/agents/AgentTestBench';
+import { WorkflowListPage } from './pages/tenant/workflows/WorkflowListPage';
+import { ServerListPage } from './pages/tenant/tools/ServerListPage';
+import { PolicyListPage } from './pages/tenant/governance/PolicyListPage';
+import { BudgetDashboard } from './pages/tenant/governance/BudgetDashboard';
+import { TenantUsagePage } from './pages/tenant/usage/TenantUsagePage';
+import { OrgSettingsPage } from './pages/tenant/settings/OrgSettingsPage';
 import { AdminDashboard } from './pages/admin/AdminDashboard';
 import { ServiceHealthPage } from './pages/admin/health/ServiceHealthPage';
 
@@ -36,11 +42,20 @@ export default function App() {
             <Route path="agents/new" element={<AgentCreatePage />} />
             <Route path="agents/:name" element={<AgentTestBench />} />
             <Route path="agents/:name/test" element={<AgentTestBench />} />
+            <Route path="workflows" element={<WorkflowListPage />} />
+            <Route path="tools" element={<ServerListPage />} />
+            <Route path="governance/policies" element={<PolicyListPage />} />
+            <Route path="governance/budgets" element={<BudgetDashboard />} />
+            <Route path="usage" element={<TenantUsagePage />} />
+            <Route path="settings/org" element={<OrgSettingsPage />} />
           </Route>
 
           {/* Admin routes */}
           <Route path="/admin" element={<AdminShell />}>
             <Route index element={<AdminDashboard />} />
+            <Route path="tenants" element={<OrgSettingsPage />} />
+            <Route path="usage" element={<TenantUsagePage />} />
+            <Route path="governance" element={<PolicyListPage />} />
             <Route path="health" element={<ServiceHealthPage />} />
           </Route>
         </Routes>
