@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: ngen
+  namespace: argocd
+spec:
+  description: NGEN Multi-Agent Platform
+  sourceRepos:
+    - https://github.com/your-org/next-gen-multi-agentic-platform.git
+  destinations:
+    - namespace: ngen
+      server: https://kubernetes.default.svc
+    - namespace: ngen-infra
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: "*"
+    - group: apps
+      kind: "*"
+    - group: networking.k8s.io
+      kind: "*"

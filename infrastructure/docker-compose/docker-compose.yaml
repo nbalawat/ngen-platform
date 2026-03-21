@@ -203,6 +203,7 @@ services:
       MODEL_REGISTRY_URL: http://model-registry:8001
       GOVERNANCE_URL: http://governance-service:8004
       MCP_MANAGER_URL: http://mcp-manager:8005
+      NATS_URL: nats://nats:4222
     ports:
       - "8006:8006"
     depends_on:

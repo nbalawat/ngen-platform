@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: ngen-platform
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - name: tenant-service
+            port: "8000"
+          - name: model-registry
+            port: "8001"
+          - name: model-gateway
+            port: "8002"
+          - name: workflow-engine
+            port: "8003"
+          - name: governance-service
+            port: "8004"
+          - name: mcp-manager
+            port: "8005"
+          - name: onboarding-agent
+            port: "8006"
+          - name: metering-service
+            port: "8007"
+  template:
+    metadata:
+      name: "ngen-{{name}}"
+      namespace: argocd
+    spec:
+      project: ngen
+      source:
+        repoURL: https://github.com/your-org/next-gen-multi-agentic-platform.git
+        targetRevision: HEAD
+        path: "infrastructure/helm/charts/{{name}}"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: ngen
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
