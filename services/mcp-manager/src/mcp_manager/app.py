@@ -6,6 +6,8 @@ from fastapi import FastAPI
 
 from mcp_manager.routes import invoke_router, server_router, tool_router
 from mcp_manager.transport import MCPTransport
+from ngen_common.auth import add_auth
+from ngen_common.auth_config import make_auth_config
 from ngen_common.error_handlers import add_error_handlers
 from ngen_common.events import add_event_bus
 from ngen_common.observability import add_observability
@@ -31,6 +33,7 @@ def create_app(
     application.include_router(invoke_router)
     add_error_handlers(application)
     add_observability(application, service_name="mcp-manager")
+    add_auth(application, make_auth_config())
     add_event_bus(application, service_name="mcp-manager")
     return application
 

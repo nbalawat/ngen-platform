@@ -114,6 +114,7 @@ services:
       NGEN_GATEWAY_DEFAULT_UPSTREAM_URL: http://mock-llm:9100
       NGEN_GATEWAY_DEBUG: "true"
       NATS_URL: nats://nats:4222
+      REDIS_URL: redis://redis:6379
     ports:
       - "8002:8002"
     depends_on:
@@ -121,6 +122,8 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
+      redis:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
       interval: 5s
@@ -157,11 +160,14 @@ services:
     environment:
       NGEN_GOVERNANCE_DEBUG: "true"
       NATS_URL: nats://nats:4222
+      REDIS_URL: redis://redis:6379
     ports:
       - "8004:8004"
     depends_on:
       nats:
         condition: service_healthy
+      redis:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health')"]
       interval: 5s

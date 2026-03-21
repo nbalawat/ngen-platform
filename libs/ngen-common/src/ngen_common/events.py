@@ -376,6 +376,13 @@ class Subjects:
     LIFECYCLE_MODEL_UPDATED = "lifecycle.model_updated"
     LIFECYCLE_MODEL_DELETED = "lifecycle.model_deleted"
     LIFECYCLE_MODEL_SYNCED = "lifecycle.model_synced"
+    LIFECYCLE_ORG_CREATED = "lifecycle.org_created"
+    LIFECYCLE_ORG_UPDATED = "lifecycle.org_updated"
+    LIFECYCLE_ORG_DELETED = "lifecycle.org_deleted"
+    LIFECYCLE_TEAM_CREATED = "lifecycle.team_created"
+    LIFECYCLE_TEAM_DELETED = "lifecycle.team_deleted"
+    LIFECYCLE_PROJECT_CREATED = "lifecycle.project_created"
+    LIFECYCLE_PROJECT_DELETED = "lifecycle.project_deleted"
 
 
 # ---------------------------------------------------------------------------

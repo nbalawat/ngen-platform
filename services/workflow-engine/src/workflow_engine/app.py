@@ -9,6 +9,8 @@ from fastapi import FastAPI
 from ngen_framework_core.executor import AgentExecutor
 from ngen_framework_core.registry import AdapterRegistry
 
+from ngen_common.auth import add_auth
+from ngen_common.auth_config import make_auth_config
 from ngen_common.error_handlers import add_error_handlers
 from ngen_common.events import add_event_bus
 from ngen_common.observability import add_observability
@@ -72,5 +74,6 @@ def create_app(
 
     add_error_handlers(app)
     add_observability(app, service_name="workflow-engine")
+    add_auth(app, make_auth_config())
     add_event_bus(app, service_name="workflow-engine")
     return app

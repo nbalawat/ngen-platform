@@ -7,7 +7,10 @@ from fastapi import FastAPI
 
 from tenant_service.api.routes import router
 from tenant_service.infrastructure.database import Base, _get_engine
+from ngen_common.auth import add_auth
+from ngen_common.auth_config import make_auth_config
 from ngen_common.error_handlers import add_error_handlers
+from ngen_common.events import add_event_bus
 from ngen_common.observability import add_observability
 
 
@@ -32,6 +35,8 @@ def create_app() -> FastAPI:
     application.include_router(router)
     add_error_handlers(application)
     add_observability(application, service_name="tenant-service")
+    add_auth(application, make_auth_config())
+    add_event_bus(application, service_name="tenant-service")
     return application
 
 

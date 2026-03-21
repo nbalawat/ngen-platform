@@ -19,8 +19,11 @@ from model_gateway.providers.anthropic import AnthropicProvider
 from model_gateway.providers.base import ProviderRegistry
 from model_gateway.providers.openai_compat import OpenAICompatProvider
 from model_gateway.rate_limiter import RateLimiter
+from model_gateway.redis_rate_limiter import create_rate_limiter
 from model_gateway.model_sync import ModelSyncSubscriber
 from model_gateway.router import ModelRouter
+from ngen_common.auth import add_auth
+from ngen_common.auth_config import make_auth_config
 from ngen_common.error_handlers import add_error_handlers
 from ngen_common.events import EventBus, add_event_bus
 from ngen_common.observability import add_observability
@@ -130,7 +133,7 @@ def create_app(
         await sync_subscriber.stop()
         await app.state.event_bus.disconnect()
         logger.info("Event bus disconnected for model-gateway")
-    limiter = rate_limiter or RateLimiter(
+    limiter = rate_limiter or create_rate_limiter(
         rpm=settings.RATE_LIMIT_RPM,
         tpm=settings.RATE_LIMIT_TPM,
     )
@@ -333,6 +336,7 @@ def create_app(
 
     add_error_handlers(app)
     add_observability(app, service_name="model-gateway")
+    add_auth(app, make_auth_config())
     return app
 
 
