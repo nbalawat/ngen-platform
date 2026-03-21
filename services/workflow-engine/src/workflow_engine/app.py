@@ -21,6 +21,8 @@ from workflow_engine.default_adapter import DefaultAdapter
 from workflow_engine.engine import WorkflowEngine
 from workflow_engine.governance import GovernanceGuard
 from workflow_engine.routes import router
+from workflow_engine.version_routes import version_router
+from workflow_engine.version_store import VersionStore
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +68,10 @@ def create_app(
     )
 
     app.state.agent_registry = AgentRegistry()
+    app.state.version_store = VersionStore()
     app.include_router(router)
     app.include_router(agent_router)
+    app.include_router(version_router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
