@@ -73,7 +73,7 @@ function generateYaml(
     'apiVersion: ngen.io/v1',
     'kind: Workflow',
     'metadata:',
-    `  name: ${name || 'my-workflow'}`,
+    `  name: ${(name || 'my-workflow').replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '') || 'my-workflow'}`,
   ];
   if (namespace && namespace !== 'default') {
     lines.push(`  namespace: ${namespace}`);
@@ -145,7 +145,7 @@ export function WorkflowBuilderPage() {
   const applyTemplate = (t: typeof TEMPLATES[number]) => {
     setTopology(t.topology);
     setAgents(t.agents);
-    setName(t.name.toLowerCase().replace(/\s+/g, '-'));
+    setName(t.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''));
     setInputData(JSON.stringify(t.input, null, 2));
     if ('edges' in t && t.edges) setEdges(t.edges);
     else setEdges([]);
