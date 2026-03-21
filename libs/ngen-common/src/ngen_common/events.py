@@ -371,6 +371,10 @@ class Subjects:
     LIFECYCLE_AGENT_CREATED = "lifecycle.agent_created"
     LIFECYCLE_AGENT_DELETED = "lifecycle.agent_deleted"
     LIFECYCLE_SERVER_REGISTERED = "lifecycle.server_registered"
+    LIFECYCLE_SERVER_DELETED = "lifecycle.server_deleted"
+    LIFECYCLE_MODEL_REGISTERED = "lifecycle.model_registered"
+    LIFECYCLE_MODEL_UPDATED = "lifecycle.model_updated"
+    LIFECYCLE_MODEL_DELETED = "lifecycle.model_deleted"
     LIFECYCLE_MODEL_SYNCED = "lifecycle.model_synced"
 
 

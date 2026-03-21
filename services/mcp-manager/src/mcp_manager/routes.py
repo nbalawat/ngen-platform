@@ -8,9 +8,11 @@ Provides:
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from mcp_manager.models import (
     Server,
@@ -21,6 +23,8 @@ from mcp_manager.models import (
     ToolEntry,
 )
 from mcp_manager.repository import MCPRepository
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Module-level singletons — reset in tests via conftest
@@ -36,6 +40,20 @@ def _get_repository() -> MCPRepository:
     return _repository
 
 
+def _publish_lifecycle_event(
+    request: Request, subject: str, data: dict,
+) -> None:
+    """Fire-and-forget lifecycle event publishing."""
+    bus = getattr(request.app.state, "event_bus", None)
+    if bus is None:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(bus.publish(subject, data, source="mcp-manager"))
+    except RuntimeError:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Server routes
 # ---------------------------------------------------------------------------
@@ -44,7 +62,7 @@ server_router = APIRouter(prefix="/api/v1/servers", tags=["servers"])
 
 
 @server_router.post("", status_code=201, response_model=Server)
-async def register_server(body: ServerCreate) -> Server:
+async def register_server(body: ServerCreate, request: Request) -> Server:
     repo = _get_repository()
     existing = repo.get_server_by_name(body.name, body.namespace)
     if existing is not None:
@@ -52,7 +70,18 @@ async def register_server(body: ServerCreate) -> Server:
             status_code=409,
             detail=f"Server '{body.name}' already registered in namespace '{body.namespace}'",
         )
-    return repo.create_server(body)
+    server = repo.create_server(body)
+
+    from ngen_common.events import Subjects
+    _publish_lifecycle_event(request, Subjects.LIFECYCLE_SERVER_REGISTERED, {
+        "server_id": server.id,
+        "name": server.name,
+        "namespace": server.namespace,
+        "transport": server.transport,
+        "endpoint": server.endpoint,
+        "tool_count": len(server.tools),
+    })
+    return server
 
 
 @server_router.get("", response_model=list[Server])
@@ -91,9 +120,20 @@ async def update_server(server_id: str, body: ServerUpdate) -> Server:
 
 
 @server_router.delete("/{server_id}", status_code=204)
-async def delete_server(server_id: str) -> None:
-    if not _get_repository().delete_server(server_id):
+async def delete_server(server_id: str, request: Request) -> None:
+    repo = _get_repository()
+    server = repo.get_server(server_id)
+    if server is None:
         raise HTTPException(status_code=404, detail="Server not found")
+    if not repo.delete_server(server_id):
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    from ngen_common.events import Subjects
+    _publish_lifecycle_event(request, Subjects.LIFECYCLE_SERVER_DELETED, {
+        "server_id": server.id,
+        "name": server.name,
+        "namespace": server.namespace,
+    })
 
 
 # ---------------------------------------------------------------------------
