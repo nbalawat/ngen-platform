@@ -8,6 +8,8 @@ import { AgentListPage } from './pages/tenant/agents/AgentListPage';
 import { AgentCreatePage } from './pages/tenant/agents/AgentCreatePage';
 import { AgentTestBench } from './pages/tenant/agents/AgentTestBench';
 import { WorkflowListPage } from './pages/tenant/workflows/WorkflowListPage';
+import { WorkflowBuilderPage } from './pages/tenant/workflows/WorkflowBuilderPage';
+import { WorkflowRunPage } from './pages/tenant/workflows/WorkflowRunPage';
 import { ServerListPage } from './pages/tenant/tools/ServerListPage';
 import { PolicyListPage } from './pages/tenant/governance/PolicyListPage';
 import { BudgetDashboard } from './pages/tenant/governance/BudgetDashboard';
@@ -43,6 +45,8 @@ export default function App() {
             <Route path="agents/:name" element={<AgentTestBench />} />
             <Route path="agents/:name/test" element={<AgentTestBench />} />
             <Route path="workflows" element={<WorkflowListPage />} />
+            <Route path="workflows/new" element={<WorkflowBuilderPage />} />
+            <Route path="workflows/run" element={<WorkflowRunPage />} />
             <Route path="tools" element={<ServerListPage />} />
             <Route path="governance/policies" element={<PolicyListPage />} />
             <Route path="governance/budgets" element={<BudgetDashboard />} />
