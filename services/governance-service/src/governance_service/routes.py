@@ -138,3 +138,61 @@ async def evaluate(body: EvalContext, request: Request) -> EvalResult:
             logger.debug("Failed to publish audit event", exc_info=True)
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Budget / spend tracking
+# ---------------------------------------------------------------------------
+
+budget_router = APIRouter(prefix="/api/v1/budgets", tags=["budgets"])
+
+
+@budget_router.get("/{namespace}")
+async def get_budget_spend(namespace: str, request: Request) -> dict:
+    """Get current daily spend for a namespace.
+
+    Returns cost accumulation tracked from ``cost.recorded`` events.
+    """
+    tracker = getattr(request.app.state, "budget_tracker", None)
+    if tracker is None:
+        raise HTTPException(status_code=503, detail="Budget tracker not available")
+
+    spend = tracker.get_spend(namespace)
+    if spend is None:
+        return {
+            "namespace": namespace,
+            "date": None,
+            "total_cost": 0.0,
+            "total_tokens": 0,
+            "request_count": 0,
+            "models": {},
+        }
+    return {
+        "namespace": namespace,
+        "date": spend.date,
+        "total_cost": round(spend.total_cost, 6),
+        "total_tokens": spend.total_tokens,
+        "request_count": spend.request_count,
+        "models": dict(spend.models),
+    }
+
+
+@budget_router.get("")
+async def list_budget_spend(request: Request) -> list[dict]:
+    """Get current daily spend for all tracked namespaces."""
+    tracker = getattr(request.app.state, "budget_tracker", None)
+    if tracker is None:
+        raise HTTPException(status_code=503, detail="Budget tracker not available")
+
+    all_spend = tracker.get_all_spend()
+    return [
+        {
+            "namespace": ns,
+            "date": spend.date,
+            "total_cost": round(spend.total_cost, 6),
+            "total_tokens": spend.total_tokens,
+            "request_count": spend.request_count,
+            "models": dict(spend.models),
+        }
+        for ns, spend in sorted(all_spend.items())
+    ]
