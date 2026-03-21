@@ -7,7 +7,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 FROM base AS builder
 
 COPY pyproject.toml uv.lock ./
-COPY libs/ngen-mock-llm/ libs/ngen-mock-llm/
+COPY libs/ngen-common/ libs/ngen-common/
 COPY services/model-gateway/ services/model-gateway/
 
 RUN uv sync --frozen --no-dev --package model-gateway
@@ -16,6 +16,7 @@ FROM base AS runtime
 
 COPY --from=builder /app/.venv /app/.venv
 COPY services/model-gateway/src/ /app/src/
+COPY libs/ngen-common/src/ /app/libs/ngen-common/src/
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app/src"

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+
+
+def _utc_now_naive() -> datetime:
+    """Timezone-naive UTC timestamp (matches TIMESTAMP WITHOUT TIME ZONE columns)."""
+    return datetime.now(UTC).replace(tzinfo=None)
 from typing import Any
 from uuid import UUID
 
@@ -123,7 +128,7 @@ class TenantRepository:
                 values[key] = val
         if not values:
             return await self.get_org(org_id)
-        values["updated_at"] = datetime.now(UTC)
+        values["updated_at"] = _utc_now_naive()
         stmt = (
             update(OrganizationRow)
             .where(OrganizationRow.id == org_id)
@@ -187,7 +192,7 @@ class TenantRepository:
                 values[key] = val
         if not values:
             return await self.get_team(org_id, team_id)
-        values["updated_at"] = datetime.now(UTC)
+        values["updated_at"] = _utc_now_naive()
         stmt = (
             update(TeamRow)
             .where(TeamRow.id == team_id, TeamRow.org_id == org_id)
@@ -253,7 +258,7 @@ class TenantRepository:
                 values[key] = val
         if not values:
             return await self.get_project(team_id, project_id)
-        values["updated_at"] = datetime.now(UTC)
+        values["updated_at"] = _utc_now_naive()
         stmt = (
             update(ProjectRow)
             .where(ProjectRow.id == project_id, ProjectRow.team_id == team_id)

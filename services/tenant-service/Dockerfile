@@ -9,7 +9,7 @@ FROM base AS builder
 
 # Copy workspace root for dependency resolution
 COPY pyproject.toml uv.lock ./
-COPY libs/ngen-framework-core/ libs/ngen-framework-core/
+COPY libs/ngen-common/ libs/ngen-common/
 COPY services/tenant-service/ services/tenant-service/
 
 # Install dependencies
@@ -20,6 +20,7 @@ FROM base AS runtime
 # Copy installed environment
 COPY --from=builder /app/.venv /app/.venv
 COPY services/tenant-service/src/ /app/src/
+COPY libs/ngen-common/src/ /app/libs/ngen-common/src/
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app/src"
