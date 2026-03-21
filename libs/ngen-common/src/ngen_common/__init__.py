@@ -31,6 +31,15 @@ from ngen_common.observability import (
     set_trace_context,
 )
 from ngen_common.error_handlers import add_error_handlers
+from ngen_common.events import (
+    Event,
+    EventBus,
+    InMemoryEventBus,
+    NATSEventBus,
+    Subjects,
+    publish_audit_event,
+    publish_cost_event,
+)
 from ngen_common.auth import (
     APIKeyStore,
     AuthConfig,
@@ -93,4 +102,12 @@ __all__ = [
     "require_scope",
     # error handlers
     "add_error_handlers",
+    # events
+    "Event",
+    "EventBus",
+    "InMemoryEventBus",
+    "NATSEventBus",
+    "Subjects",
+    "publish_cost_event",
+    "publish_audit_event",
 ]
