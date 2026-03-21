@@ -22,6 +22,7 @@ from fastapi import FastAPI, HTTPException, Query
 
 from ngen_common.auth import add_auth
 from ngen_common.auth_config import make_auth_config
+from ngen_common.cors import add_cors
 from ngen_common.error_handlers import add_error_handlers
 from ngen_common.events import EventBus, InMemoryEventBus, add_event_bus
 from ngen_common.observability import add_observability
@@ -180,6 +181,7 @@ def create_app(
         return tracker.get_summary()
 
     add_error_handlers(application)
+    add_cors(application)
     add_observability(application, service_name="metering-service")
     add_auth(application, make_auth_config())
     bus = add_event_bus(application, service_name="metering-service")

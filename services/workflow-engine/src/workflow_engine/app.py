@@ -11,6 +11,7 @@ from ngen_framework_core.registry import AdapterRegistry
 
 from ngen_common.auth import add_auth
 from ngen_common.auth_config import make_auth_config
+from ngen_common.cors import add_cors
 from ngen_common.error_handlers import add_error_handlers
 from ngen_common.events import add_event_bus
 from ngen_common.observability import add_observability

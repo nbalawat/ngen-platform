@@ -22,6 +22,7 @@ from model_gateway.rate_limiter import RateLimiter
 from model_gateway.redis_rate_limiter import create_rate_limiter
 from model_gateway.model_sync import ModelSyncSubscriber
 from model_gateway.router import ModelRouter
+from ngen_common.cors import add_cors
 from ngen_common.auth import add_auth
 from ngen_common.auth_config import make_auth_config
 from ngen_common.error_handlers import add_error_handlers
@@ -335,6 +336,7 @@ def create_app(
         }
 
     add_error_handlers(app)
+    add_cors(app)
     add_observability(app, service_name="model-gateway")
     add_auth(app, make_auth_config())
     return app

@@ -233,6 +233,26 @@ services:
       timeout: 5s
       retries: 5
 
+  portal:
+    build:
+      context: ../../portal
+      dockerfile: Dockerfile
+    container_name: ngen-portal
+    ports:
+      - "3000:3000"
+    depends_on:
+      - tenant-service
+      - model-registry
+      - model-gateway
+      - workflow-engine
+      - governance-service
+      - mcp-manager
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
   nats_data:
