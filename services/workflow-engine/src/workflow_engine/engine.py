@@ -223,7 +223,13 @@ class WorkflowEngine:
                 )
 
             finally:
-                await self._executor.teardown_all()
+                # Only tear down agents created for this workflow run,
+                # not standalone agents registered via /agents endpoint
+                for name in agent_names:
+                    try:
+                        await self._executor.teardown(name)
+                    except Exception:
+                        pass  # Agent may already be gone
 
     async def _create_agents(self, workflow: WorkflowCRD) -> list[str]:
         """Create all agents declared in the workflow spec."""
