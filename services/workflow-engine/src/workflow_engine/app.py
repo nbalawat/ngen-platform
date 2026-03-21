@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from ngen_framework_core.executor import AgentExecutor
 
 from ngen_common.error_handlers import add_error_handlers
+from ngen_common.events import add_event_bus
 from ngen_common.observability import add_observability
 from workflow_engine.config import Settings
 from workflow_engine.engine import WorkflowEngine
@@ -60,4 +61,5 @@ def create_app(
 
     add_error_handlers(app)
     add_observability(app, service_name="workflow-engine")
+    add_event_bus(app, service_name="workflow-engine")
     return app

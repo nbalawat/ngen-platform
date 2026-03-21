@@ -17,6 +17,7 @@ from ngen_common.events import (
     InMemoryEventBus,
     NATSEventBus,
     Subjects,
+    add_event_bus,
     publish_audit_event,
     publish_cost_event,
 )
@@ -378,6 +379,67 @@ class TestNATSEventBusGraceful:
 
     async def test_connect_unreachable_server(self):
         """Connecting to unreachable server should not raise."""
-        bus = NATSEventBus(url="nats://nonexistent:4222")
+        bus = NATSEventBus(
+            url="nats://127.0.0.1:19999",
+            connect_timeout=1.0,
+            max_reconnect_attempts=0,
+        )
         await bus.connect()  # should log warning, not raise
         assert bus._nc is None
+
+
+# ---------------------------------------------------------------------------
+# add_event_bus helper tests
+# ---------------------------------------------------------------------------
+
+
+class TestAddEventBus:
+    """Tests for the add_event_bus FastAPI integration helper."""
+
+    def test_creates_inmemory_bus_when_no_nats_url(self):
+        """Without NATS_URL, should create InMemoryEventBus."""
+        import os
+        from fastapi import FastAPI
+
+        os.environ.pop("NATS_URL", None)
+        app = FastAPI()
+        bus = add_event_bus(app, service_name="test-service")
+        assert isinstance(bus, InMemoryEventBus)
+        assert app.state.event_bus is bus
+
+    def test_creates_nats_bus_when_url_provided(self):
+        """With explicit nats_url, should create NATSEventBus."""
+        from fastapi import FastAPI
+
+        app = FastAPI()
+        bus = add_event_bus(
+            app, service_name="test-service",
+            nats_url="nats://localhost:14222",  # intentionally unused port
+        )
+        assert isinstance(bus, NATSEventBus)
+        assert app.state.event_bus is bus
+
+    def test_creates_nats_bus_from_env(self):
+        """Should read NATS_URL from environment."""
+        import os
+        from fastapi import FastAPI
+
+        os.environ["NATS_URL"] = "nats://env-host:4222"
+        try:
+            app = FastAPI()
+            bus = add_event_bus(app, service_name="test-service")
+            assert isinstance(bus, NATSEventBus)
+            assert bus._url == "nats://env-host:4222"
+        finally:
+            os.environ.pop("NATS_URL", None)
+
+    def test_bus_stored_on_app_state(self):
+        """Event bus should be accessible via app.state.event_bus."""
+        import os
+        from fastapi import FastAPI
+
+        os.environ.pop("NATS_URL", None)
+        app = FastAPI()
+        bus = add_event_bus(app, service_name="test-service")
+        assert hasattr(app.state, "event_bus")
+        assert app.state.event_bus is bus

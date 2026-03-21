@@ -21,6 +21,7 @@ from model_gateway.providers.openai_compat import OpenAICompatProvider
 from model_gateway.rate_limiter import RateLimiter
 from model_gateway.router import ModelRouter
 from ngen_common.error_handlers import add_error_handlers
+from ngen_common.events import EventBus, add_event_bus
 from ngen_common.observability import add_observability
 
 logger = logging.getLogger(__name__)
@@ -84,15 +85,45 @@ def create_app(
     http_client: httpx.AsyncClient | None = None,
     provider_registry: ProviderRegistry | None = None,
     auto_register: bool = False,
+    event_bus: EventBus | None = None,
 ) -> FastAPI:
     app = FastAPI(title="NGEN Model Gateway", version="0.1.0")
+
+    # Wire event bus (reads NATS_URL from env if not provided)
+    import asyncio
+    _bus = event_bus
+    if _bus is None:
+        _bus_holder: list[EventBus] = []
+        # Use add_event_bus to create and register lifecycle hooks
+        # This is deferred to startup, but we need the bus for CostTracker now
+        # So we create it eagerly via the helper
+        import os
+        nats_url = os.environ.get("NATS_URL", "")
+        if nats_url:
+            from ngen_common.events import NATSEventBus
+            _bus = NATSEventBus(url=nats_url, source="model-gateway")
+        else:
+            from ngen_common.events import InMemoryEventBus
+            _bus = InMemoryEventBus()
+
+    app.state.event_bus = _bus
+
+    @app.on_event("startup")
+    async def _connect_event_bus() -> None:
+        await app.state.event_bus.connect()
+        logger.info("Event bus connected for model-gateway")
+
+    @app.on_event("shutdown")
+    async def _disconnect_event_bus() -> None:
+        await app.state.event_bus.disconnect()
+        logger.info("Event bus disconnected for model-gateway")
 
     model_router = router or ModelRouter()
     limiter = rate_limiter or RateLimiter(
         rpm=settings.RATE_LIMIT_RPM,
         tpm=settings.RATE_LIMIT_TPM,
     )
-    tracker = cost_tracker or CostTracker()
+    tracker = cost_tracker or CostTracker(event_bus=_bus)
     providers = provider_registry or _default_provider_registry()
 
     if auto_register:

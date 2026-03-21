@@ -255,9 +255,13 @@ class NATSEventBus(EventBus):
         self,
         url: str = "nats://localhost:4222",
         source: str = "",
+        connect_timeout: float = 5.0,
+        max_reconnect_attempts: int = 3,
     ) -> None:
         self._url = url
         self._source = source
+        self._connect_timeout = connect_timeout
+        self._max_reconnect_attempts = max_reconnect_attempts
         self._nc = None  # nats.Client instance
         self._subscriptions: dict[str, Any] = {}
 
@@ -265,7 +269,15 @@ class NATSEventBus(EventBus):
         """Connect to NATS server."""
         try:
             import nats
-            self._nc = await nats.connect(self._url)
+            self._nc = await asyncio.wait_for(
+                nats.connect(
+                    self._url,
+                    connect_timeout=int(self._connect_timeout),
+                    max_reconnect_attempts=self._max_reconnect_attempts,
+                    allow_reconnect=self._max_reconnect_attempts > 0,
+                ),
+                timeout=self._connect_timeout + 2.0,
+            )
             logger.info("Connected to NATS at %s", self._url)
         except ImportError:
             logger.warning("nats-py not installed — NATS event bus unavailable")
@@ -389,6 +401,54 @@ async def publish_cost_event(
         },
         source=source,
     )
+
+
+def add_event_bus(
+    app: Any,
+    service_name: str,
+    nats_url: str | None = None,
+) -> EventBus:
+    """Create and attach an event bus to a FastAPI application.
+
+    If nats_url is provided, creates a NATSEventBus connected to the
+    NATS server. Falls back to InMemoryEventBus if NATS is unavailable.
+
+    The event bus is stored on ``app.state.event_bus`` and is
+    automatically connected on startup and disconnected on shutdown
+    via FastAPI event handlers.
+
+    Args:
+        app: FastAPI application instance.
+        service_name: Name of the service (used as event source).
+        nats_url: NATS connection URL. If None, reads NATS_URL env var.
+                  Falls back to InMemoryEventBus if empty.
+
+    Returns:
+        The created EventBus instance.
+    """
+    import os
+
+    url = nats_url or os.environ.get("NATS_URL", "")
+
+    if url:
+        bus: EventBus = NATSEventBus(url=url, source=service_name)
+    else:
+        logger.info("No NATS_URL configured — using InMemoryEventBus for %s", service_name)
+        bus = InMemoryEventBus()
+
+    app.state.event_bus = bus
+
+    @app.on_event("startup")
+    async def _connect_event_bus() -> None:
+        await bus.connect()
+        logger.info("Event bus connected for %s", service_name)
+
+    @app.on_event("shutdown")
+    async def _disconnect_event_bus() -> None:
+        await bus.disconnect()
+        logger.info("Event bus disconnected for %s", service_name)
+
+    return bus
 
 
 async def publish_audit_event(

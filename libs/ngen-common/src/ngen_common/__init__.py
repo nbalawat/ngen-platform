@@ -37,6 +37,7 @@ from ngen_common.events import (
     InMemoryEventBus,
     NATSEventBus,
     Subjects,
+    add_event_bus,
     publish_audit_event,
     publish_cost_event,
 )
@@ -110,4 +111,5 @@ __all__ = [
     "Subjects",
     "publish_cost_event",
     "publish_audit_event",
+    "add_event_bus",
 ]

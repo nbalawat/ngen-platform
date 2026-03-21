@@ -6,7 +6,10 @@ an evaluation context against all applicable policies.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+import asyncio
+import logging
+
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from governance_service.engine import PolicyEngine
 from governance_service.models import (
@@ -104,6 +107,34 @@ async def delete_policy(policy_id: str) -> None:
 eval_router = APIRouter(prefix="/api/v1", tags=["evaluation"])
 
 
+logger = logging.getLogger(__name__)
+
+
 @eval_router.post("/evaluate", response_model=EvalResult)
-async def evaluate(body: EvalContext) -> EvalResult:
-    return _get_engine().evaluate(body)
+async def evaluate(body: EvalContext, request: Request) -> EvalResult:
+    result = _get_engine().evaluate(body)
+
+    # Publish audit event (fire-and-forget)
+    event_bus = getattr(request.app.state, "event_bus", None)
+    if event_bus is not None:
+        try:
+            from ngen_common.events import Subjects, publish_audit_event
+            asyncio.get_running_loop().create_task(
+                publish_audit_event(
+                    event_bus,
+                    subject=Subjects.AUDIT_POLICY_EVALUATED,
+                    data={
+                        "namespace": body.namespace,
+                        "agent_name": body.agent_name,
+                        "allowed": result.allowed,
+                        "violations": len(result.violations),
+                        "warnings": len(result.warnings),
+                        "evaluated_policies": result.evaluated_policies,
+                    },
+                    source="governance-service",
+                )
+            )
+        except Exception:
+            logger.debug("Failed to publish audit event", exc_info=True)
+
+    return result
