@@ -4,11 +4,15 @@ import { formatCost, formatTokens } from '../../../lib/utils';
 import { meteringApi } from '../../../api/meteringApi';
 
 export function TenantUsagePage() {
-  const { data: usage, isLoading } = useQuery({
-    queryKey: queryKeys.usage.tenant('default'),
-    queryFn: () => meteringApi.getUsage('default'),
+  const { data: allUsage } = useQuery({
+    queryKey: ['usage', 'all'],
+    queryFn: () => meteringApi.listUsage(),
     refetchInterval: 15000,
   });
+
+  // Pick the first tenant with data, or aggregate all
+  const usage = allUsage && allUsage.length > 0 ? allUsage[0] : null;
+  const isLoading = !allUsage;
 
   return (
     <div>
