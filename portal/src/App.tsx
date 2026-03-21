@@ -17,6 +17,8 @@ import { TenantUsagePage } from './pages/tenant/usage/TenantUsagePage';
 import { OrgSettingsPage } from './pages/tenant/settings/OrgSettingsPage';
 import { AdminDashboard } from './pages/admin/AdminDashboard';
 import { ServiceHealthPage } from './pages/admin/health/ServiceHealthPage';
+import { AdminUsagePage } from './pages/admin/usage/AdminUsagePage';
+import { AdminTenantsPage } from './pages/admin/tenants/AdminTenantsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -57,8 +59,8 @@ export default function App() {
           {/* Admin routes */}
           <Route path="/admin" element={<AdminShell />}>
             <Route index element={<AdminDashboard />} />
-            <Route path="tenants" element={<OrgSettingsPage />} />
-            <Route path="usage" element={<TenantUsagePage />} />
+            <Route path="tenants" element={<AdminTenantsPage />} />
+            <Route path="usage" element={<AdminUsagePage />} />
             <Route path="governance" element={<PolicyListPage />} />
             <Route path="health" element={<ServiceHealthPage />} />
           </Route>
