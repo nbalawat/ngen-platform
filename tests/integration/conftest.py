@@ -41,6 +41,8 @@ SERVICE_URLS = {
     "mcp_manager": "http://localhost:8005",
     "mock_llm": "http://localhost:9100",
     "nats_monitor": "http://localhost:8222",
+    "onboarding": "http://localhost:8006",
+    "metering": "http://localhost:8007",
 }
 
 

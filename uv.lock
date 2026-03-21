@@ -10,6 +10,7 @@ members = [
     "governance-service",
     "langgraph-adapter",
     "mcp-manager",
+    "metering-service",
     "model-gateway",
     "model-registry",
     "ms-agent-framework-adapter",
@@ -903,6 +904,25 @@ wheels = [
 ]
 
 [[package]]
+name = "metering-service"
+version = "0.1.0"
+source = { editable = "services/metering-service" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "nats-py" },
+    { name = "ngen-common" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.111,<1.0" },
+    { name = "nats-py", specifier = ">=2.0" },
+    { name = "ngen-common", editable = "libs/ngen-common" },
+    { name = "uvicorn", specifier = ">=0.30,<1.0" },
+]
+
+[[package]]
 name = "model-gateway"
 version = "0.1.0"
 source = { editable = "services/model-gateway" }
@@ -1163,6 +1183,7 @@ dependencies = [
     { name = "google-adk-adapter" },
     { name = "governance-service" },
     { name = "mcp-manager" },
+    { name = "metering-service" },
     { name = "model-gateway" },
     { name = "model-registry" },
     { name = "ms-agent-framework-adapter" },
@@ -1171,6 +1192,7 @@ dependencies = [
     { name = "ngen-framework-core" },
     { name = "ngen-mock-llm" },
     { name = "ngen-sdk" },
+    { name = "onboarding-agent" },
     { name = "tenant-service" },
     { name = "workflow-engine" },
 ]
@@ -1193,6 +1215,7 @@ requires-dist = [
     { name = "google-adk-adapter", editable = "adapters/google-adk-adapter" },
     { name = "governance-service", editable = "services/governance-service" },
     { name = "mcp-manager", editable = "services/mcp-manager" },
+    { name = "metering-service", editable = "services/metering-service" },
     { name = "model-gateway", editable = "services/model-gateway" },
     { name = "model-registry", editable = "services/model-registry" },
     { name = "ms-agent-framework-adapter", editable = "adapters/ms-agent-framework-adapter" },
@@ -1202,6 +1225,7 @@ requires-dist = [
     { name = "ngen-framework-core", editable = "libs/ngen-framework-core" },
     { name = "ngen-mock-llm", editable = "libs/ngen-mock-llm" },
     { name = "ngen-sdk", editable = "libs/ngen-sdk" },
+    { name = "onboarding-agent", editable = "services/onboarding-agent" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
@@ -1232,12 +1256,18 @@ version = "0.1.0"
 source = { editable = "services/onboarding-agent" }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
+    { name = "ngen-common" },
+    { name = "ngen-sdk" },
     { name = "uvicorn" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.111,<1.0" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "ngen-common", editable = "libs/ngen-common" },
+    { name = "ngen-sdk", editable = "libs/ngen-sdk" },
     { name = "uvicorn", specifier = ">=0.30,<1.0" },
 ]
 

@@ -5,9 +5,8 @@ workflow runs. Agents can be created from AgentCRD YAML, listed,
 inspected, and torn down. Each agent is managed through the
 AgentExecutor and can be invoked directly.
 
-This complements the WorkflowEngine which creates agents ephemerally
-per-run. The AgentManager creates persistent agents that survive
-across requests.
+Includes integrated memory support via MemoryInterceptor — agent
+conversations are automatically persisted to the memory subsystem.
 """
 
 from __future__ import annotations
@@ -25,11 +24,16 @@ from pydantic import BaseModel, Field
 
 from ngen_framework_core.crd import parse_crd
 from ngen_framework_core.executor import AgentExecutor
+from ngen_framework_core.memory_interceptor import MemoryInterceptor
+from ngen_framework_core.memory_manager import DefaultMemoryManager
+from ngen_framework_core.memory_store import InMemoryMemoryStore
 from ngen_framework_core.protocols import (
     AgentEvent,
     AgentEventType,
     AgentInput,
     AgentSpec,
+    MemoryScope,
+    MemoryType,
     ModelRef,
 )
 
@@ -263,6 +267,18 @@ async def invoke_agent(
         session_id=body.session_id,
     )
 
+    # Set up memory for conversation persistence
+    manager = _get_memory_manager(request, agent_name, body.session_id)
+
+    # Persist user messages to memory
+    for msg in (body.messages or []):
+        if isinstance(msg, dict) and msg.get("content"):
+            await manager.write_memory(
+                MemoryType.CONVERSATIONAL,
+                msg["content"],
+                role=msg.get("role", "user"),
+            )
+
     events: list[dict[str, Any]] = []
     output_text = ""
 
@@ -279,6 +295,14 @@ async def invoke_agent(
         raise HTTPException(
             status_code=500,
             detail=f"Agent execution failed: {exc}",
+        )
+
+    # Persist agent response to memory
+    if output_text:
+        await manager.write_memory(
+            MemoryType.CONVERSATIONAL,
+            output_text,
+            role="assistant",
         )
 
     registry.increment_invocations(agent_name)
@@ -311,3 +335,82 @@ async def delete_agent(agent_name: str, request: Request) -> None:
     _publish_agent_event(request, Subjects.LIFECYCLE_AGENT_DELETED, {
         "name": agent_name,
     })
+
+
+# ---------------------------------------------------------------------------
+# Memory endpoints
+# ---------------------------------------------------------------------------
+
+
+def _get_memory_store(request: Request) -> InMemoryMemoryStore:
+    """Get or create the shared memory store."""
+    store = getattr(request.app.state, "memory_store", None)
+    if store is None:
+        store = InMemoryMemoryStore()
+        request.app.state.memory_store = store
+    return store
+
+
+def _get_memory_manager(
+    request: Request, agent_name: str, session_id: str | None = None,
+) -> DefaultMemoryManager:
+    """Create a MemoryManager scoped to an agent."""
+    store = _get_memory_store(request)
+    scope = MemoryScope(
+        org_id="default",
+        team_id="default",
+        project_id="default",
+        agent_name=agent_name,
+        thread_id=session_id,
+    )
+    return DefaultMemoryManager(scope=scope, store=store)
+
+
+@agent_router.get("/{agent_name}/memory")
+async def get_agent_memory(
+    agent_name: str,
+    request: Request,
+    memory_type: str = "conversational",
+    limit: int = 20,
+) -> list[dict]:
+    """Retrieve memory entries for an agent."""
+    registry = _get_registry(request)
+    if registry.get(agent_name) is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
+    try:
+        mem_type = MemoryType(memory_type)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid memory type: {memory_type}. Valid: {[t.value for t in MemoryType]}",
+        )
+
+    manager = _get_memory_manager(request, agent_name)
+    entries = await manager.read_memory(mem_type, limit=limit)
+    return [
+        {
+            "id": e.id,
+            "memory_type": e.memory_type.value,
+            "content": e.content,
+            "role": e.role,
+            "created_at": e.created_at,
+        }
+        for e in entries
+    ]
+
+
+@agent_router.get("/{agent_name}/memory/context")
+async def get_agent_context_window(
+    agent_name: str,
+    request: Request,
+    query: str = "",
+) -> dict:
+    """Build a context window from the agent's memory."""
+    registry = _get_registry(request)
+    if registry.get(agent_name) is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
+    manager = _get_memory_manager(request, agent_name)
+    context = await manager.build_context_window(query or None)
+    return {"context": context, "agent_name": agent_name}

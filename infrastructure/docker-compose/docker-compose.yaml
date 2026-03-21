@@ -193,6 +193,45 @@ services:
       timeout: 5s
       retries: 5
 
+  onboarding-agent:
+    build:
+      context: ../..
+      dockerfile: services/onboarding-agent/Dockerfile
+    container_name: ngen-onboarding-agent
+    environment:
+      TENANT_SERVICE_URL: http://tenant-service:8000
+      MODEL_REGISTRY_URL: http://model-registry:8001
+      GOVERNANCE_URL: http://governance-service:8004
+      MCP_MANAGER_URL: http://mcp-manager:8005
+    ports:
+      - "8006:8006"
+    depends_on:
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8006/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  metering-service:
+    build:
+      context: ../..
+      dockerfile: services/metering-service/Dockerfile
+    container_name: ngen-metering-service
+    environment:
+      NATS_URL: nats://nats:4222
+    ports:
+      - "8007:8007"
+    depends_on:
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8007/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
   nats_data:

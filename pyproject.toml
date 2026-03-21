@@ -16,6 +16,8 @@ dependencies = [
     "tenant-service",
     "governance-service",
     "mcp-manager",
+    "onboarding-agent",
+    "metering-service",
     "crewai-adapter",
     "claude-agent-sdk-adapter",
     "google-adk-adapter",
@@ -50,6 +52,7 @@ members = [
     "services/mcp-manager",
     "services/governance-service",
     "services/onboarding-agent",
+    "services/metering-service",
     "cli",
 ]
 
@@ -65,6 +68,8 @@ model-gateway = { workspace = true }
 tenant-service = { workspace = true }
 governance-service = { workspace = true }
 mcp-manager = { workspace = true }
+onboarding-agent = { workspace = true }
+metering-service = { workspace = true }
 crewai-adapter = { workspace = true }
 claude-agent-sdk-adapter = { workspace = true }
 google-adk-adapter = { workspace = true }
