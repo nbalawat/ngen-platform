@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 import yaml
@@ -17,7 +18,23 @@ from workflow_engine.errors import WorkflowNotFoundError
 from workflow_engine.models import WorkflowRunRequest, WorkflowRunResponse, WorkflowRunStatus
 from workflow_engine.sse import format_keepalive, format_sse
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/workflows", tags=["workflows"])
+
+
+def _publish_workflow_event(
+    request: Request, subject: str, data: dict,
+) -> None:
+    """Fire-and-forget workflow lifecycle event publishing."""
+    bus = getattr(request.app.state, "event_bus", None)
+    if bus is None:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(bus.publish(subject, data, source="workflow-engine"))
+    except RuntimeError:
+        pass
 
 KEEPALIVE_INTERVAL = 15.0  # seconds
 
@@ -48,8 +65,18 @@ def _parse_workflow(body: WorkflowRunRequest) -> WorkflowCRD:
 @router.post("/run", response_model=WorkflowRunResponse)
 async def run_workflow(body: WorkflowRunRequest, request: Request) -> WorkflowRunResponse:
     """Start a new workflow run (blocking — returns all events at once)."""
+    from ngen_common.events import Subjects
+
     engine = _get_engine(request)
     workflow = _parse_workflow(body)
+    wf_name = workflow.metadata.name
+
+    # Publish started event
+    _publish_workflow_event(request, Subjects.AUDIT_WORKFLOW_STARTED, {
+        "workflow_name": wf_name,
+        "topology": workflow.spec.topology.value if hasattr(workflow.spec.topology, "value") else str(workflow.spec.topology),
+        "agent_count": len(workflow.spec.agents),
+    })
 
     # Run the workflow and collect events
     events: list[dict[str, Any]] = []
@@ -68,9 +95,26 @@ async def run_workflow(body: WorkflowRunRequest, request: Request) -> WorkflowRu
     runs = engine.list_runs()
     run = runs[-1] if runs else None
 
+    run_id = run.run_id if run else "unknown"
+    status = run.status if run else WorkflowRunStatus.FAILED
+
+    # Publish completed/failed event
+    if status == WorkflowRunStatus.COMPLETED:
+        _publish_workflow_event(request, Subjects.AUDIT_WORKFLOW_COMPLETED, {
+            "run_id": run_id,
+            "workflow_name": wf_name,
+            "event_count": len(events),
+        })
+    else:
+        _publish_workflow_event(request, Subjects.AUDIT_WORKFLOW_FAILED, {
+            "run_id": run_id,
+            "workflow_name": wf_name,
+            "error": run.error if run else "unknown",
+        })
+
     return WorkflowRunResponse(
-        run_id=run.run_id if run else "unknown",
-        status=run.status if run else WorkflowRunStatus.FAILED,
+        run_id=run_id,
+        status=status,
         result=run.result if run else None,
         events=events,
         error=run.error if run else None,
@@ -93,8 +137,19 @@ async def run_workflow_stream(body: WorkflowRunRequest, request: Request) -> Str
     - ``event: done`` — workflow completed, data contains run_id/status/result
     - ``event: error`` — an error occurred
     """
+    from ngen_common.events import Subjects
+
     engine = _get_engine(request)
     workflow = _parse_workflow(body)
+    wf_name = workflow.metadata.name
+
+    # Publish started event
+    _publish_workflow_event(request, Subjects.AUDIT_WORKFLOW_STARTED, {
+        "workflow_name": wf_name,
+        "topology": workflow.spec.topology.value if hasattr(workflow.spec.topology, "value") else str(workflow.spec.topology),
+        "agent_count": len(workflow.spec.agents),
+        "streaming": True,
+    })
 
     _sentinel = object()
 
@@ -166,8 +221,21 @@ async def run_workflow_stream(body: WorkflowRunRequest, request: Request) -> Str
                 "result": run.result if run else None,
             })
 
+            # Publish completed event
+            _publish_workflow_event(request, Subjects.AUDIT_WORKFLOW_COMPLETED, {
+                "run_id": run.run_id if run else "unknown",
+                "workflow_name": wf_name,
+            })
+
         except Exception as exc:
             yield format_sse("error", {"error": str(exc)})
+
+            # Publish failed event
+            _publish_workflow_event(request, Subjects.AUDIT_WORKFLOW_FAILED, {
+                "run_id": run_id or "unknown",
+                "workflow_name": wf_name,
+                "error": str(exc),
+            })
 
     return StreamingResponse(
         event_stream(),

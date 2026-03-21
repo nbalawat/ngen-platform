@@ -206,3 +206,83 @@ class TestWorkflowSSEStreaming:
                     break
 
         assert "done" in event_types, f"No 'done' event found. Events: {event_types}"
+
+
+# ---------------------------------------------------------------------------
+# Agent Lifecycle Manager
+# ---------------------------------------------------------------------------
+
+
+class TestAgentLifecycleManager:
+    """Test standalone agent CRUD and invocation via the workflow engine."""
+
+    async def test_create_agent(self, http: httpx.AsyncClient, engine_url):
+        name = f"integ-agent-{uuid.uuid4().hex[:8]}"
+        resp = await http.post(
+            f"{engine_url}/agents",
+            json={
+                "name": name,
+                "description": "Integration test agent",
+                "framework": "default",
+            },
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["name"] == name
+        assert data["status"] == "running"
+
+    async def test_list_agents(self, http: httpx.AsyncClient, engine_url):
+        resp = await http.get(f"{engine_url}/agents")
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
+
+    async def test_get_agent(self, http: httpx.AsyncClient, engine_url):
+        name = f"get-agent-{uuid.uuid4().hex[:8]}"
+        await http.post(f"{engine_url}/agents", json={
+            "name": name, "framework": "default",
+        })
+        resp = await http.get(f"{engine_url}/agents/{name}")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == name
+
+    async def test_get_nonexistent(self, http: httpx.AsyncClient, engine_url):
+        resp = await http.get(f"{engine_url}/agents/nonexistent-xyz")
+        assert resp.status_code == 404
+
+    async def test_invoke_agent(self, http: httpx.AsyncClient, engine_url):
+        name = f"invoke-agent-{uuid.uuid4().hex[:8]}"
+        await http.post(f"{engine_url}/agents", json={
+            "name": name, "framework": "default",
+        })
+        resp = await http.post(
+            f"{engine_url}/agents/{name}/invoke",
+            json={
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["agent_name"] == name
+        assert len(data["events"]) > 0
+
+    async def test_delete_agent(self, http: httpx.AsyncClient, engine_url):
+        name = f"del-agent-{uuid.uuid4().hex[:8]}"
+        await http.post(f"{engine_url}/agents", json={
+            "name": name, "framework": "default",
+        })
+        resp = await http.delete(f"{engine_url}/agents/{name}")
+        assert resp.status_code == 204
+
+        # Verify gone
+        resp = await http.get(f"{engine_url}/agents/{name}")
+        assert resp.status_code == 404
+
+    async def test_duplicate_rejected(self, http: httpx.AsyncClient, engine_url):
+        name = f"dup-agent-{uuid.uuid4().hex[:8]}"
+        await http.post(f"{engine_url}/agents", json={
+            "name": name, "framework": "default",
+        })
+        resp = await http.post(f"{engine_url}/agents", json={
+            "name": name, "framework": "default",
+        })
+        assert resp.status_code == 409

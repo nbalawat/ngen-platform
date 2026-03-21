@@ -7,11 +7,14 @@ import logging
 from fastapi import FastAPI
 
 from ngen_framework_core.executor import AgentExecutor
+from ngen_framework_core.registry import AdapterRegistry
 
 from ngen_common.error_handlers import add_error_handlers
 from ngen_common.events import add_event_bus
 from ngen_common.observability import add_observability
+from workflow_engine.agent_manager import AgentRegistry, agent_router
 from workflow_engine.config import Settings
+from workflow_engine.default_adapter import DefaultAdapter
 from workflow_engine.engine import WorkflowEngine
 from workflow_engine.governance import GovernanceGuard
 from workflow_engine.routes import router
@@ -34,7 +37,13 @@ def create_app(
         governance_guard: Optional GovernanceGuard for policy enforcement.
     """
     _settings = settings or Settings()
-    _executor = executor or AgentExecutor()
+    if executor is None:
+        # Register the built-in default adapter so agents can always be created
+        registry = AdapterRegistry()
+        registry.register(DefaultAdapter())
+        _executor = AgentExecutor(registry=registry)
+    else:
+        _executor = executor
 
     app = FastAPI(
         title="NGEN Workflow Engine",
@@ -53,7 +62,9 @@ def create_app(
         governance_guard=governance_guard,
     )
 
+    app.state.agent_registry = AgentRegistry()
     app.include_router(router)
+    app.include_router(agent_router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
