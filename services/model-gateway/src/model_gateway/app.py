@@ -19,6 +19,7 @@ from model_gateway.providers.anthropic import AnthropicProvider
 from model_gateway.providers.base import ProviderRegistry
 from model_gateway.providers.openai_compat import OpenAICompatProvider
 from model_gateway.rate_limiter import RateLimiter
+from model_gateway.model_sync import ModelSyncSubscriber
 from model_gateway.router import ModelRouter
 from ngen_common.error_handlers import add_error_handlers
 from ngen_common.events import EventBus, add_event_bus
@@ -108,17 +109,27 @@ def create_app(
 
     app.state.event_bus = _bus
 
+    model_router = router or ModelRouter()
+
+    # Model sync subscriber — auto-updates router from registry events
+    sync_subscriber = ModelSyncSubscriber(
+        event_bus=_bus,
+        model_router=model_router,
+        default_upstream_url=settings.DEFAULT_UPSTREAM_URL,
+    )
+    app.state.model_sync = sync_subscriber
+
     @app.on_event("startup")
     async def _connect_event_bus() -> None:
         await app.state.event_bus.connect()
+        await sync_subscriber.start()
         logger.info("Event bus connected for model-gateway")
 
     @app.on_event("shutdown")
     async def _disconnect_event_bus() -> None:
+        await sync_subscriber.stop()
         await app.state.event_bus.disconnect()
         logger.info("Event bus disconnected for model-gateway")
-
-    model_router = router or ModelRouter()
     limiter = rate_limiter or RateLimiter(
         rpm=settings.RATE_LIMIT_RPM,
         tpm=settings.RATE_LIMIT_TPM,

@@ -174,13 +174,15 @@ invoke_router = APIRouter(prefix="/api/v1", tags=["invocation"])
 
 
 @invoke_router.post("/invoke", response_model=ToolCallResponse)
-async def invoke_tool(body: ToolCallRequest) -> ToolCallResponse:
+async def invoke_tool(body: ToolCallRequest, request: Request) -> ToolCallResponse:
     """Invoke a tool on a registered MCP server.
 
-    In production, this would proxy the call to the actual MCP server
-    using the appropriate transport. For now, it validates the server
-    and tool exist and returns a stub response.
+    Dispatches the call to the actual MCP server using the appropriate
+    transport (streamable-http, sse). Validates server and tool exist,
+    then proxies the JSON-RPC tools/call request.
     """
+    from mcp_manager.transport import MCPTransport, MCPTransportError
+
     repo = _get_repository()
     server = repo.get_server_by_name(body.server_name, body.namespace)
     if server is None:
@@ -196,13 +198,28 @@ async def invoke_tool(body: ToolCallRequest) -> ToolCallResponse:
             detail=f"Tool '{body.tool_name}' not found on server '{body.server_name}'",
         )
 
+    # Get or create transport
+    transport: MCPTransport = getattr(request.app.state, "mcp_transport", None) or MCPTransport()
     start = time.monotonic()
 
-    # Stub: in production, this dispatches to the MCP server via transport
-    result = {
-        "output": f"Tool '{body.tool_name}' executed on '{body.server_name}'",
-        "arguments": body.arguments,
-    }
+    try:
+        result = await transport.invoke(
+            server=server,
+            tool_name=body.tool_name,
+            arguments=body.arguments,
+        )
+    except MCPTransportError as exc:
+        duration_ms = (time.monotonic() - start) * 1000
+        logger.warning(
+            "Tool invocation failed: %s/%s: %s",
+            body.server_name, body.tool_name, exc,
+        )
+        return ToolCallResponse(
+            server_name=body.server_name,
+            tool_name=body.tool_name,
+            error=str(exc),
+            duration_ms=round(duration_ms, 2),
+        )
 
     duration_ms = (time.monotonic() - start) * 1000
 

@@ -222,7 +222,8 @@ class TestMCPToolCatalog:
 class TestMCPToolInvocation:
     """Test tool invocation endpoint (returns stub response)."""
 
-    async def test_invoke_tool(self, http: httpx.AsyncClient, mcp_url):
+    async def test_invoke_tool_returns_transport_error(self, http: httpx.AsyncClient, mcp_url):
+        """Invoking a tool on an unreachable server returns a transport error."""
         name = f"invoke-server-{uuid.uuid4().hex[:8]}"
         ns = f"invoke-ns-{uuid.uuid4().hex[:8]}"
         await http.post(
@@ -230,8 +231,8 @@ class TestMCPToolInvocation:
             json={
                 "name": name,
                 "namespace": ns,
-                "endpoint": "http://invoke.example.com/mcp",
-                "transport": "stdio",
+                "endpoint": "http://127.0.0.1:19999/mcp",
+                "transport": "streamable-http",
                 "tools": [
                     {
                         "name": "calculator",
@@ -253,7 +254,10 @@ class TestMCPToolInvocation:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert "result" in data or "error" in data
+        # Server is unreachable so we get a transport error
+        assert data["error"] is not None
+        assert "Connection failed" in data["error"]
+        assert data["duration_ms"] is not None
 
     async def test_invoke_nonexistent_server(self, http: httpx.AsyncClient, mcp_url):
         resp = await http.post(
