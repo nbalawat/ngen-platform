@@ -30,6 +30,7 @@ from ngen_common.observability import (
     reset_metrics_store,
     set_trace_context,
 )
+from ngen_common.error_handlers import add_error_handlers
 from ngen_common.auth import (
     APIKeyStore,
     AuthConfig,
@@ -90,4 +91,6 @@ __all__ = [
     "create_jwt",
     "require_role",
     "require_scope",
+    # error handlers
+    "add_error_handlers",
 ]

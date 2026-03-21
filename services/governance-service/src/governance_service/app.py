@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from governance_service.routes import eval_router, router
+from ngen_common.error_handlers import add_error_handlers
 from ngen_common.observability import add_observability
 
 
@@ -20,6 +21,7 @@ def create_app() -> FastAPI:
 
     application.include_router(router)
     application.include_router(eval_router)
+    add_error_handlers(application)
     add_observability(application, service_name="governance-service")
     return application
 

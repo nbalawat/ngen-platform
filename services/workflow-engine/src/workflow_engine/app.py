@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from ngen_framework_core.executor import AgentExecutor
 
+from ngen_common.error_handlers import add_error_handlers
 from ngen_common.observability import add_observability
 from workflow_engine.config import Settings
 from workflow_engine.engine import WorkflowEngine
@@ -57,5 +58,6 @@ def create_app(
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    add_error_handlers(app)
     add_observability(app, service_name="workflow-engine")
     return app

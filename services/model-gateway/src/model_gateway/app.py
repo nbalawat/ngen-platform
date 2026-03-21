@@ -20,6 +20,7 @@ from model_gateway.providers.base import ProviderRegistry
 from model_gateway.providers.openai_compat import OpenAICompatProvider
 from model_gateway.rate_limiter import RateLimiter
 from model_gateway.router import ModelRouter
+from ngen_common.error_handlers import add_error_handlers
 from ngen_common.observability import add_observability
 
 logger = logging.getLogger(__name__)
@@ -288,6 +289,7 @@ def create_app(
             ],
         }
 
+    add_error_handlers(app)
     add_observability(app, service_name="model-gateway")
     return app
 

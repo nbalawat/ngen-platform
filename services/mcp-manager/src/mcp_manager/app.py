@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from mcp_manager.routes import invoke_router, server_router, tool_router
+from ngen_common.error_handlers import add_error_handlers
 from ngen_common.observability import add_observability
 
 
@@ -21,6 +22,7 @@ def create_app() -> FastAPI:
     application.include_router(server_router)
     application.include_router(tool_router)
     application.include_router(invoke_router)
+    add_error_handlers(application)
     add_observability(application, service_name="mcp-manager")
     return application
 
