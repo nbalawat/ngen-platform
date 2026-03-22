@@ -6,9 +6,12 @@ import { formatRelative } from '../../../lib/utils';
 import { agentApi } from '../../../api/agentApi';
 import { StatusBadge } from '../../../components/shared/StatusBadge';
 
+type FilterTab = 'all' | 'platform' | 'custom';
+
 export function AgentListPage() {
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<FilterTab>('all');
   const { data: agents, isLoading } = useQuery({ queryKey: queryKeys.agents.all, queryFn: agentApi.list });
   const deleteMut = useMutation({
     mutationFn: (name: string) => agentApi.delete(name),
@@ -16,17 +19,27 @@ export function AgentListPage() {
   });
 
   const filtered = agents?.filter((a) => {
+    // Source filter
+    const source = (a as { source?: string }).source ?? 'tenant';
+    if (filter === 'platform' && source !== 'platform') return false;
+    if (filter === 'custom' && source !== 'tenant') return false;
+    // Text search
     if (!search) return true;
     const q = search.toLowerCase();
     return a.name.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q);
   });
+
+  const platformCount = agents?.filter(a => (a as { source?: string }).source === 'platform').length ?? 0;
+  const customCount = agents?.filter(a => (a as { source?: string }).source !== 'platform').length ?? 0;
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Agents</h1>
-          <p className="text-sm text-gray-500 mt-1">Create, test, and manage standalone AI agents</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Platform-provided and custom agents for building workflows
+          </p>
         </div>
         <Link
           to="/app/agents/new"
@@ -36,16 +49,38 @@ export function AgentListPage() {
         </Link>
       </div>
 
-      {agents && agents.length > 0 && (
-        <div className="mb-4">
+      {/* Filter tabs + search */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+          {([
+            { key: 'all', label: 'All', count: agents?.length ?? 0 },
+            { key: 'platform', label: 'Platform', count: platformCount },
+            { key: 'custom', label: 'Custom', count: customCount },
+          ] as const).map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setFilter(tab.key)}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                filter === tab.key
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {tab.label}
+              <span className="ml-1 text-gray-400">({tab.count})</span>
+            </button>
+          ))}
+        </div>
+
+        {agents && agents.length > 0 && (
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search agents by name or description..."
-            className="w-80 px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="Search agents..."
+            className="w-64 px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
           />
-        </div>
-      )}
+        )}
+      </div>
 
       {isLoading ? (
         <div className="flex items-center justify-center py-20">
@@ -55,7 +90,7 @@ export function AgentListPage() {
         <div className="text-center py-20 bg-white rounded-xl border border-gray-200">
           <span className="text-4xl">🧠</span>
           <h3 className="mt-3 text-lg font-medium text-gray-900">
-            {search ? 'No agents match your search' : 'No agents yet'}
+            {search ? 'No agents match your search' : filter === 'custom' ? 'No custom agents yet' : 'No agents yet'}
           </h3>
           <p className="mt-1 text-sm text-gray-500">
             {search ? 'Try a different search term' : 'Create your first agent to get started'}
@@ -70,7 +105,7 @@ export function AgentListPage() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Framework</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Source</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Invocations</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
@@ -78,31 +113,52 @@ export function AgentListPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filtered?.map((agent) => (
-                <tr key={agent.name} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3">
-                    <Link to={`/app/agents/${agent.name}`} className="text-sm font-medium text-blue-600 hover:text-blue-800">
-                      {agent.name}
-                    </Link>
-                    {agent.description && <p className="text-xs text-gray-400 mt-0.5">{agent.description}</p>}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-600">{agent.framework}</td>
-                  <td className="px-4 py-3"><StatusBadge value={agent.status} /></td>
-                  <td className="px-4 py-3 text-sm text-gray-600">{agent.invocation_count}</td>
-                  <td className="px-4 py-3 text-sm text-gray-500">{formatRelative(agent.created_at)}</td>
-                  <td className="px-4 py-3 text-right">
-                    <Link to={`/app/agents/${agent.name}/test`} className="text-xs text-blue-600 hover:text-blue-800 mr-3">
-                      Test
-                    </Link>
-                    <button
-                      onClick={() => { if (confirm(`Delete agent "${agent.name}"?`)) deleteMut.mutate(agent.name); }}
-                      className="text-xs text-red-500 hover:text-red-700"
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {filtered?.map((agent) => {
+                const source = (agent as { source?: string }).source ?? 'tenant';
+                const isPlatform = source === 'platform';
+                return (
+                  <tr key={agent.name} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3">
+                      <Link to={`/app/agents/${agent.name}`} className="text-sm font-medium text-blue-600 hover:text-blue-800">
+                        {agent.name}
+                      </Link>
+                      {agent.description && (
+                        <p className="text-xs text-gray-400 mt-0.5 line-clamp-1">{agent.description}</p>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {isPlatform ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700 border border-indigo-200">
+                          Platform
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">
+                          Custom
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3"><StatusBadge value={agent.status} /></td>
+                    <td className="px-4 py-3 text-sm text-gray-600">{agent.invocation_count}</td>
+                    <td className="px-4 py-3 text-sm text-gray-500">{formatRelative(agent.created_at)}</td>
+                    <td className="px-4 py-3 text-right space-x-2">
+                      <Link to={`/app/agents/${agent.name}/test`} className="text-xs text-blue-600 hover:text-blue-800">
+                        Test
+                      </Link>
+                      <Link to="/app/workflows/new" className="text-xs text-green-600 hover:text-green-800">
+                        Use in Workflow
+                      </Link>
+                      {!isPlatform && (
+                        <button
+                          onClick={() => { if (confirm(`Delete agent "${agent.name}"?`)) deleteMut.mutate(agent.name); }}
+                          className="text-xs text-red-500 hover:text-red-700"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

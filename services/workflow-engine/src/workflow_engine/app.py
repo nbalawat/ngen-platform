@@ -15,7 +15,7 @@ from ngen_common.cors import add_cors
 from ngen_common.error_handlers import add_error_handlers
 from ngen_common.events import add_event_bus
 from ngen_common.observability import add_observability
-from workflow_engine.agent_manager import AgentRegistry, agent_router, memory_router
+from workflow_engine.agent_manager import AgentRegistry, agent_router, memory_router, seed_platform_agents
 from workflow_engine.config import Settings
 from workflow_engine.default_adapter import DefaultAdapter
 from workflow_engine.engine import WorkflowEngine
@@ -77,6 +77,12 @@ def create_app(
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.on_event("startup")
+    async def _seed_platform() -> None:
+        count = await seed_platform_agents(app.state.agent_registry, _executor)
+        if count:
+            logger.info("Seeded %d platform agents on startup", count)
 
     add_error_handlers(app)
     add_observability(app, service_name="workflow-engine")

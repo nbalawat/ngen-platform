@@ -39,6 +39,9 @@ from ngen_framework_core.protocols import (
 
 logger = logging.getLogger(__name__)
 
+# Platform tenant — agents under this tenant are visible to ALL tenants
+PLATFORM_TENANT = "platform"
+
 
 # ---------------------------------------------------------------------------
 # Models
@@ -81,6 +84,7 @@ class AgentInfo(BaseModel):
     status: str = "running"
     created_at: float = 0.0
     invocation_count: int = 0
+    source: str = "tenant"
 
 
 class AgentInvokeResponse(BaseModel):
@@ -108,6 +112,7 @@ class ManagedAgent:
     status: str = "running"
     created_at: float = field(default_factory=time.time)
     invocation_count: int = 0
+    source: str = "tenant"  # "platform" or "tenant"
 
 
 class AgentRegistry:
@@ -115,6 +120,10 @@ class AgentRegistry:
 
     Agents are keyed by ``{tenant_id}:{agent_name}`` to prevent
     cross-tenant name collisions and ensure complete isolation.
+
+    Platform agents (tenant_id="platform") are visible to ALL tenants
+    via fallthrough: if a tenant-scoped lookup misses, the registry
+    checks the platform scope before returning None.
     """
 
     def __init__(self) -> None:
@@ -128,19 +137,45 @@ class AgentRegistry:
         self._agents[self._key(tenant_id, agent.name)] = agent
 
     def get(self, name: str, tenant_id: str = "default") -> ManagedAgent | None:
-        return self._agents.get(self._key(tenant_id, name))
+        # Try tenant-scoped first
+        agent = self._agents.get(self._key(tenant_id, name))
+        if agent is not None:
+            return agent
+        # Fall through to platform agents (visible to all tenants)
+        if tenant_id != PLATFORM_TENANT:
+            return self._agents.get(self._key(PLATFORM_TENANT, name))
+        return None
 
     def list(self, tenant_id: str = "default") -> list[ManagedAgent]:
         prefix = f"{tenant_id}:"
-        return [a for k, a in self._agents.items() if k.startswith(prefix)]
+        tenant_agents = [a for k, a in self._agents.items() if k.startswith(prefix)]
+        # Include platform agents for non-platform tenants
+        if tenant_id != PLATFORM_TENANT:
+            platform_prefix = f"{PLATFORM_TENANT}:"
+            platform_agents = [
+                a for k, a in self._agents.items()
+                if k.startswith(platform_prefix)
+            ]
+            # Deduplicate: tenant agents override platform agents with same name
+            tenant_names = {a.name for a in tenant_agents}
+            for pa in platform_agents:
+                if pa.name not in tenant_names:
+                    tenant_agents.append(pa)
+        return tenant_agents
 
     def remove(self, name: str, tenant_id: str = "default") -> bool:
         return self._agents.pop(self._key(tenant_id, name), None) is not None
 
     def increment_invocations(self, name: str, tenant_id: str = "default") -> None:
+        # Try tenant-scoped first, then platform
         agent = self._agents.get(self._key(tenant_id, name))
+        if agent is None and tenant_id != PLATFORM_TENANT:
+            agent = self._agents.get(self._key(PLATFORM_TENANT, name))
         if agent:
             agent.invocation_count += 1
+
+    def is_platform_agent(self, name: str) -> bool:
+        return self._key(PLATFORM_TENANT, name) in self._agents
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +250,13 @@ async def create_agent(body: AgentCreateRequest, request: Request) -> AgentInfo:
     registry = _get_registry(request)
     tenant_id = _get_tenant_id(request)
 
+    # Check for platform agent name collision
+    if registry.is_platform_agent(body.name):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Agent '{body.name}' is a platform-provided agent and cannot be overridden",
+        )
+
     if registry.get(body.name, tenant_id) is not None:
         raise HTTPException(
             status_code=409,
@@ -268,31 +310,37 @@ async def create_agent(body: AgentCreateRequest, request: Request) -> AgentInfo:
         model=managed.model,
         system_prompt=managed.system_prompt,
         created_at=managed.created_at,
+        source=managed.source,
+    )
+
+
+def _agent_to_info(a: ManagedAgent) -> AgentInfo:
+    """Convert a ManagedAgent to AgentInfo response."""
+    return AgentInfo(
+        name=a.name,
+        description=a.description,
+        framework=a.framework,
+        model=a.model,
+        system_prompt=a.system_prompt,
+        status=a.status,
+        created_at=a.created_at,
+        invocation_count=a.invocation_count,
+        source=a.source,
     )
 
 
 @agent_router.get("", response_model=list[AgentInfo])
 async def list_agents(request: Request, search: str = "") -> list[AgentInfo]:
-    """List managed agents for the caller's tenant. Optionally filter by search."""
+    """List managed agents for the caller's tenant. Includes platform agents."""
     registry = _get_registry(request)
     tenant_id = _get_tenant_id(request)
     agents = registry.list(tenant_id)
     if search:
         q = search.lower()
         agents = [a for a in agents if q in a.name.lower() or q in a.description.lower()]
-    return [
-        AgentInfo(
-            name=a.name,
-            description=a.description,
-            framework=a.framework,
-            model=a.model,
-            system_prompt=a.system_prompt,
-            status=a.status,
-            created_at=a.created_at,
-            invocation_count=a.invocation_count,
-        )
-        for a in agents
-    ]
+    # Sort: platform agents first, then by name
+    agents.sort(key=lambda a: (0 if a.source == "platform" else 1, a.name))
+    return [_agent_to_info(a) for a in agents]
 
 
 @agent_router.get("/{agent_name}", response_model=AgentInfo)
@@ -303,16 +351,7 @@ async def get_agent(agent_name: str, request: Request) -> AgentInfo:
     agent = registry.get(agent_name, tenant_id)
     if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
-    return AgentInfo(
-        name=agent.name,
-        description=agent.description,
-        framework=agent.framework,
-        model=agent.model,
-        system_prompt=agent.system_prompt,
-        status=agent.status,
-        created_at=agent.created_at,
-        invocation_count=agent.invocation_count,
-    )
+    return _agent_to_info(agent)
 
 
 @agent_router.post("/{agent_name}/invoke", response_model=AgentInvokeResponse)
@@ -454,6 +493,12 @@ async def delete_agent(agent_name: str, request: Request) -> None:
     if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
 
+    if agent.source == "platform":
+        raise HTTPException(
+            status_code=403,
+            detail=f"Agent '{agent_name}' is platform-provided and cannot be deleted",
+        )
+
     try:
         await executor.teardown(agent_name)
     except Exception:
@@ -465,6 +510,122 @@ async def delete_agent(agent_name: str, request: Request) -> None:
     _publish_agent_event(request, Subjects.LIFECYCLE_AGENT_DELETED, {
         "name": agent_name,
     })
+
+
+# ---------------------------------------------------------------------------
+# Platform agent seeding
+# ---------------------------------------------------------------------------
+
+_PLATFORM_AGENTS = [
+    {
+        "name": "research-analyst",
+        "description": "Researches topics using web search and knowledge base, synthesizes findings into clear reports",
+        "system_prompt": (
+            "You are an expert research analyst. Your job is to research topics thoroughly using "
+            "available tools (web search and knowledge base), synthesize information from multiple "
+            "sources, identify key facts and trends, and present clear, well-structured reports. "
+            "Always cite your sources and distinguish between established facts and emerging trends."
+        ),
+        "tools": ["web-search/search", "knowledge-base/search_docs"],
+    },
+    {
+        "name": "customer-support",
+        "description": "Helps users resolve issues with accounts, billing, and product features",
+        "system_prompt": (
+            "You are a professional customer support agent. Help users resolve issues with their "
+            "accounts, billing, and product features. Be empathetic, professional, and solution-oriented. "
+            "Always ask clarifying questions before providing solutions. Search the knowledge base "
+            "for relevant documentation and procedures. If you cannot resolve an issue, clearly "
+            "explain what the user should do next."
+        ),
+        "tools": ["knowledge-base/search_docs"],
+    },
+    {
+        "name": "data-analyst",
+        "description": "Analyzes data, generates insights, and explains metrics in business context",
+        "system_prompt": (
+            "You are a senior data analyst. Analyze data, generate insights, and explain metrics "
+            "in business context. When presented with data or questions about metrics, provide "
+            "statistical analysis, identify trends and anomalies, and translate findings into "
+            "actionable business recommendations. Use the knowledge base for reference data."
+        ),
+        "tools": ["knowledge-base/search_docs"],
+    },
+    {
+        "name": "content-writer",
+        "description": "Writes clear, engaging content across formats — blog posts, docs, emails, reports",
+        "system_prompt": (
+            "You are an expert content writer. Create clear, engaging content across multiple formats "
+            "including blog posts, documentation, emails, and reports. Adapt your tone and style to "
+            "the audience and purpose. Use web search to fact-check and find supporting information. "
+            "Always structure content with clear headings, logical flow, and actionable conclusions."
+        ),
+        "tools": ["web-search/search"],
+    },
+    {
+        "name": "document-processor",
+        "description": "Parses, extracts structured data from, and summarizes documents (PDF, DOCX, etc.)",
+        "system_prompt": (
+            "You are a document processing specialist. Parse documents to extract structured data, "
+            "summarize key information, and identify important entities and relationships. Use the "
+            "document intelligence tools to parse PDFs and other document formats, extract specific "
+            "fields using schemas, and split multi-document files into logical sections."
+        ),
+        "tools": ["document-intelligence/parse_document", "document-intelligence/extract_data"],
+    },
+    {
+        "name": "code-reviewer",
+        "description": "Reviews code for bugs, security vulnerabilities, and best practices",
+        "system_prompt": (
+            "You are a senior code reviewer. Review code for bugs, security vulnerabilities, "
+            "performance issues, and adherence to best practices. Provide specific, actionable "
+            "feedback with code examples for improvements. Reference the knowledge base for "
+            "coding standards and architectural guidelines. Be constructive and educational."
+        ),
+        "tools": ["knowledge-base/search_docs"],
+    },
+]
+
+
+async def seed_platform_agents(
+    registry: AgentRegistry, executor: AgentExecutor,
+) -> int:
+    """Seed platform-provided agents visible to all tenants."""
+    count = 0
+    for agent_def in _PLATFORM_AGENTS:
+        name = agent_def["name"]
+        if registry.get(name, PLATFORM_TENANT) is not None:
+            continue  # Already seeded
+
+        spec = AgentSpec(
+            name=name,
+            description=agent_def["description"],
+            framework="default",
+            model=ModelRef(name="default"),
+            system_prompt=agent_def["system_prompt"],
+            metadata={"tools": agent_def.get("tools", [])},
+        )
+
+        try:
+            await executor.create(spec)
+        except Exception:
+            logger.warning("Failed to create platform agent '%s'", name, exc_info=True)
+            continue
+
+        managed = ManagedAgent(
+            name=name,
+            description=agent_def["description"],
+            framework="default",
+            model="default",
+            system_prompt=agent_def["system_prompt"],
+            source="platform",
+        )
+        registry.register(managed, PLATFORM_TENANT)
+        count += 1
+
+    if count:
+        logger.info("Seeded %d platform agents", count)
+    return count
 
 
 # ---------------------------------------------------------------------------
