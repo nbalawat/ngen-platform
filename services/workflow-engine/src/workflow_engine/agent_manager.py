@@ -248,6 +248,19 @@ async def create_agent(body: AgentCreateRequest, request: Request) -> AgentInfo:
         "model": body.model,
     })
 
+    # Write tool specs to TOOLBOX memory
+    tools = body.metadata.get("tools", [])
+    if tools:
+        mgr = _get_memory_manager(request, body.name)
+        tools_text = "Available tools for this agent:\n" + "\n".join(
+            f"- {t}" for t in tools
+        )
+        await mgr.write_memory(
+            MemoryType.TOOLBOX,
+            tools_text,
+            metadata={"tools": tools},
+        )
+
     return AgentInfo(
         name=managed.name,
         description=managed.description,
@@ -340,9 +353,21 @@ async def invoke_agent(
 
     # Set up memory for conversation persistence
     manager = _get_memory_manager(request, agent_name, body.session_id)
+    from ngen_common.events import Subjects
+
+    # Set up interceptor for automatic event→memory mapping
+    async def _on_intercept(mem_type: str, size_bytes: int, token_estimate: int) -> None:
+        _publish_memory_event(
+            request, Subjects.MEMORY_WRITTEN, agent_name,
+            mem_type, size_bytes=size_bytes, token_estimate=token_estimate,
+        )
+
+    interceptor = MemoryInterceptor(
+        manager=manager,
+        event_callback=_on_intercept,
+    )
 
     # Persist user messages to memory
-    from ngen_common.events import Subjects
     for msg in (body.messages or []):
         if isinstance(msg, dict) and msg.get("content"):
             content = msg["content"]
@@ -352,9 +377,7 @@ async def invoke_agent(
                 role=msg.get("role", "user"),
             )
             _publish_memory_event(
-                request,
-                Subjects.MEMORY_WRITTEN,
-                agent_name,
+                request, Subjects.MEMORY_WRITTEN, agent_name,
                 MemoryType.CONVERSATIONAL.value,
                 size_bytes=len(content.encode("utf-8")),
                 token_estimate=len(content) // 4,
@@ -365,6 +388,9 @@ async def invoke_agent(
 
     try:
         async for event in executor.execute(agent_name, agent_input):
+            # Intercept events → auto-writes TOOL_LOG, WORKFLOW, etc.
+            event = await interceptor.intercept(event)
+
             events.append({
                 "type": event.type.value,
                 "data": event.data,
@@ -386,13 +412,27 @@ async def invoke_agent(
             role="assistant",
         )
         _publish_memory_event(
-            request,
-            Subjects.MEMORY_WRITTEN,
-            agent_name,
+            request, Subjects.MEMORY_WRITTEN, agent_name,
             MemoryType.CONVERSATIONAL.value,
             size_bytes=len(output_text.encode("utf-8")),
             token_estimate=len(output_text) // 4,
         )
+
+    # --- Background async tasks (fire-and-forget) ---
+    loop = asyncio.get_running_loop()
+
+    # Entity extraction from the response
+    if output_text and len(output_text) > 50:
+        loop.create_task(_extract_entities(manager, output_text))
+
+    # Auto-summarization when threshold reached
+    stats = await manager.get_stats()
+    conv_count = stats.get("by_type", {}).get(
+        MemoryType.CONVERSATIONAL.value, {}
+    ).get("count", 0)
+    if conv_count >= 20:
+        thread_id = body.session_id or "default"
+        loop.create_task(manager.summarize_and_compact(thread_id=thread_id))
 
     registry.increment_invocations(agent_name, tenant_id)
 
@@ -458,10 +498,51 @@ def _extract_tenant(request: Request) -> tuple[str, str, str]:
     return org_id, team_id, project_id
 
 
+async def _summarize_fn(text: str) -> str:
+    """Summarize text via LLM. Used as the memory manager's summarize callback."""
+    from workflow_engine.default_adapter import _call_llm
+
+    result = await _call_llm(
+        system_prompt=(
+            "You are a memory compaction assistant. Summarize the following conversation "
+            "concisely, preserving key facts, decisions, action items, and any important "
+            "context. Be brief but thorough."
+        ),
+        user_msg=text,
+    )
+    return result or text[:500]
+
+
+async def _extract_entities(manager: DefaultMemoryManager, text: str) -> None:
+    """Extract named entities from text and write to ENTITY memory (fire-and-forget)."""
+    try:
+        from workflow_engine.default_adapter import _call_llm
+
+        entities_text = await _call_llm(
+            system_prompt=(
+                "Extract all named entities from the following text. "
+                "Group them by type: People, Organizations, Technologies, "
+                "Locations, Dates, Concepts. Return as a concise bullet list. "
+                "If there are no entities, respond with 'No entities found.'"
+            ),
+            user_msg=text,
+        )
+        if entities_text and "no entities" not in entities_text.lower():
+            await manager.write_memory(
+                MemoryType.ENTITY,
+                entities_text,
+                metadata={"source": "auto_extraction"},
+            )
+    except Exception:
+        logger.debug("Entity extraction failed (non-critical)", exc_info=True)
+
+
 def _get_memory_manager(
     request: Request, agent_name: str, session_id: str | None = None,
 ) -> DefaultMemoryManager:
     """Create a MemoryManager scoped to an agent and tenant."""
+    from ngen_framework_core.protocols import MemoryPolicy
+
     store = _get_memory_store(request)
     org_id, team_id, project_id = _extract_tenant(request)
     scope = MemoryScope(
@@ -471,7 +552,12 @@ def _get_memory_manager(
         agent_name=agent_name,
         thread_id=session_id,
     )
-    return DefaultMemoryManager(scope=scope, store=store)
+    return DefaultMemoryManager(
+        scope=scope,
+        store=store,
+        summarize_fn=_summarize_fn,
+        policy=MemoryPolicy(summarization_threshold=20),
+    )
 
 
 @agent_router.get("/{agent_name}/memory")
@@ -502,7 +588,10 @@ async def get_agent_memory(
             "memory_type": e.memory_type.value,
             "content": e.content,
             "role": e.role,
+            "metadata": e.metadata,
             "created_at": e.created_at,
+            "size_bytes": e.size_bytes,
+            "token_estimate": e.token_estimate,
         }
         for e in entries
     ]

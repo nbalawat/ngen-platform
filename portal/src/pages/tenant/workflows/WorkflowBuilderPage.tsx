@@ -139,6 +139,30 @@ export function WorkflowBuilderPage() {
 
   const saveMut = useMutation({
     mutationFn: async () => {
+      // Auto-create NEW agents before saving workflow
+      const agentNodes = canvasNodes.filter(n => n.type === 'agent');
+      for (const node of agentNodes) {
+        const data = node.data as AgentNodeData;
+        try {
+          await apiFetch(`${API.workflow}/agents`, {
+            method: 'POST',
+            body: JSON.stringify({
+              name: data.label,
+              framework: 'default',
+              description: data.role || '',
+              system_prompt: data.role || `You are ${data.label}.`,
+              metadata: { tools: data.tools || [] },
+            }),
+          });
+        } catch (e: unknown) {
+          // Skip if agent already exists (409)
+          if (e && typeof e === 'object' && 'status' in e && (e as { status: number }).status === 409) {
+            continue;
+          }
+          throw e;
+        }
+      }
+
       return apiFetch(`${API.workflow}/versions/workflows`, {
         method: 'POST',
         body: JSON.stringify({
@@ -150,6 +174,7 @@ export function WorkflowBuilderPage() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.workflows.runs });
+      qc.invalidateQueries({ queryKey: queryKeys.agents.all });
       nav('/app/workflows');
     },
   });

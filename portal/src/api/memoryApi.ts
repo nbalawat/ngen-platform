@@ -17,12 +17,15 @@ interface AgentMemoryStatsResponse {
   context_budget_tokens: number;
 }
 
-interface MemoryEntryListItem {
+export interface MemoryEntryListItem {
   id: string;
   memory_type: string;
   content: string;
   role: string | null;
+  metadata?: Record<string, unknown>;
   created_at: number;
+  size_bytes?: number;
+  token_estimate?: number;
 }
 
 export const memoryApi = {
