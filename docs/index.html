@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NGEN Platform — Multi-Agent Orchestration at Scale</title>
+  <meta name="description" content="Build, test, and deploy AI agent workflows with multi-tenant isolation, real tool invocation, and agentic RAG.">
+  <style>
+    :root {
+      --blue: #2563eb;
+      --blue-dark: #1d4ed8;
+      --indigo: #4f46e5;
+      --gray-50: #f9fafb;
+      --gray-100: #f3f4f6;
+      --gray-200: #e5e7eb;
+      --gray-300: #d1d5db;
+      --gray-500: #6b7280;
+      --gray-600: #4b5563;
+      --gray-700: #374151;
+      --gray-800: #1f2937;
+      --gray-900: #111827;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--gray-900); line-height: 1.6; }
+    .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+
+    /* Hero */
+    .hero { background: linear-gradient(135deg, var(--gray-900) 0%, #1e293b 100%); color: white; padding: 80px 0 100px; text-align: center; }
+    .hero h1 { font-size: 3rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 16px; }
+    .hero h1 span { background: linear-gradient(90deg, #60a5fa, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .hero p { font-size: 1.2rem; color: #94a3b8; max-width: 640px; margin: 0 auto 32px; }
+    .hero-buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 24px; border-radius: 8px; font-size: 0.95rem; font-weight: 600; text-decoration: none; transition: all 0.2s; }
+    .btn-primary { background: var(--blue); color: white; }
+    .btn-primary:hover { background: var(--blue-dark); transform: translateY(-1px); }
+    .btn-outline { border: 1px solid #475569; color: #cbd5e1; }
+    .btn-outline:hover { border-color: #94a3b8; color: white; }
+    .badge { display: inline-block; padding: 4px 12px; border-radius: 100px; font-size: 0.75rem; font-weight: 600; background: rgba(99,102,241,0.15); color: #a5b4fc; margin-bottom: 16px; letter-spacing: 0.05em; }
+
+    /* Features */
+    .features { padding: 80px 0; }
+    .features h2 { text-align: center; font-size: 2rem; font-weight: 700; margin-bottom: 12px; }
+    .features .subtitle { text-align: center; color: var(--gray-500); margin-bottom: 48px; font-size: 1.05rem; }
+    .feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
+    .feature-card { padding: 28px; border: 1px solid var(--gray-200); border-radius: 12px; background: white; transition: box-shadow 0.2s; }
+    .feature-card:hover { box-shadow: 0 4px 24px rgba(0,0,0,0.08); }
+    .feature-icon { font-size: 1.8rem; margin-bottom: 12px; }
+    .feature-card h3 { font-size: 1.1rem; font-weight: 700; margin-bottom: 8px; }
+    .feature-card p { color: var(--gray-600); font-size: 0.9rem; }
+
+    /* Architecture */
+    .architecture { background: var(--gray-50); padding: 80px 0; }
+    .architecture h2 { text-align: center; font-size: 2rem; font-weight: 700; margin-bottom: 40px; }
+    .arch-diagram { background: var(--gray-900); color: #e2e8f0; border-radius: 12px; padding: 32px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.8rem; line-height: 1.5; overflow-x: auto; white-space: pre; max-width: 800px; margin: 0 auto; }
+
+    /* Services */
+    .services { padding: 80px 0; }
+    .services h2 { text-align: center; font-size: 2rem; font-weight: 700; margin-bottom: 40px; }
+    .service-table { width: 100%; border-collapse: collapse; }
+    .service-table th { text-align: left; padding: 12px 16px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gray-500); border-bottom: 2px solid var(--gray-200); }
+    .service-table td { padding: 12px 16px; border-bottom: 1px solid var(--gray-100); font-size: 0.9rem; }
+    .service-table tr:hover td { background: var(--gray-50); }
+    .port { display: inline-block; padding: 2px 8px; border-radius: 4px; font-family: monospace; font-size: 0.8rem; background: #eff6ff; color: var(--blue); font-weight: 600; }
+
+    /* Memory */
+    .memory { background: var(--gray-50); padding: 80px 0; }
+    .memory h2 { text-align: center; font-size: 2rem; font-weight: 700; margin-bottom: 12px; }
+    .memory .subtitle { text-align: center; color: var(--gray-500); margin-bottom: 40px; }
+    .memory-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+    .memory-card { background: white; border: 1px solid var(--gray-200); border-radius: 10px; padding: 20px; text-align: center; }
+    .memory-card .icon { font-size: 1.6rem; margin-bottom: 8px; }
+    .memory-card h4 { font-size: 0.95rem; font-weight: 700; margin-bottom: 4px; }
+    .memory-card p { font-size: 0.8rem; color: var(--gray-500); }
+
+    /* CTA */
+    .cta { background: linear-gradient(135deg, var(--gray-900) 0%, #1e293b 100%); color: white; padding: 80px 0; text-align: center; }
+    .cta h2 { font-size: 2rem; font-weight: 700; margin-bottom: 12px; }
+    .cta p { color: #94a3b8; margin-bottom: 32px; font-size: 1.05rem; }
+    .code-block { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 20px 24px; font-family: 'SF Mono', monospace; font-size: 0.85rem; text-align: left; max-width: 520px; margin: 0 auto 32px; color: #e2e8f0; }
+    .code-block .comment { color: #64748b; }
+    .code-block .cmd { color: #22d3ee; }
+
+    /* Footer */
+    footer { padding: 32px 0; text-align: center; color: var(--gray-500); font-size: 0.85rem; border-top: 1px solid var(--gray-200); }
+    footer a { color: var(--blue); text-decoration: none; }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .hero h1 { font-size: 2rem; }
+      .hero p { font-size: 1rem; }
+      .feature-grid { grid-template-columns: 1fr; }
+      .memory-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="container">
+    <div class="badge">OPEN SOURCE &middot; MIT LICENSE</div>
+    <h1>Build AI Agent Workflows <span>at Scale</span></h1>
+    <p>NGEN Platform is a multi-tenant orchestration system for creating, testing, and deploying AI agents with real tools, memory, and governance.</p>
+    <div class="hero-buttons">
+      <a href="https://github.com/nbalawat/ngen-platform" class="btn btn-primary">
+        View on GitHub
+      </a>
+      <a href="https://github.com/nbalawat/ngen-platform#quick-start" class="btn btn-outline">
+        Quick Start
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- Features -->
+<section class="features">
+  <div class="container">
+    <h2>Everything You Need for Agent Orchestration</h2>
+    <p class="subtitle">From single agents to complex multi-agent workflows, with enterprise-grade isolation.</p>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feature-icon">&#129504;</div>
+        <h3>Platform &amp; Custom Agents</h3>
+        <p>6 curated platform agents ready to use, plus full flexibility for tenants to create their own with custom system prompts and tools.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#9889;</div>
+        <h3>Visual Workflow Builder</h3>
+        <p>Drag-and-drop canvas with React Flow. Mix sequential, parallel, and graph topologies. AI-assisted generation from natural language descriptions.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128295;</div>
+        <h3>Real Tool Invocation (MCP)</h3>
+        <p>Built-in web search, knowledge base, and document intelligence. Tools execute real operations via Model Context Protocol JSON-RPC.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128218;</div>
+        <h3>Agentic RAG Pipeline</h3>
+        <p>Upload PDFs, DOCX, and text files. Automatic parsing, chunking, embedding, and vector search. Tenant-scoped document collections.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128190;</div>
+        <h3>7-Type Memory System</h3>
+        <p>Conversational, entity extraction, summarization, tool logs, workflow state, toolbox registry, and knowledge base. All tenant-isolated.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128274;</div>
+        <h3>Multi-Tenant Isolation</h3>
+        <p>Strict tenant scoping across agents, memory, documents, and workflows. Platform agents are read-only. RBAC enforced at every layer.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Architecture -->
+<section class="architecture">
+  <div class="container">
+    <h2>Microservices Architecture</h2>
+    <div class="arch-diagram">
+                     Portal (React :3000)
+                           |
+          +----------------+----------------+
+          |                |                |
+   Workflow Engine   Model Gateway    MCP Manager
+      :8003             :8002           :8005
+   - Agents          - LLM routing   - Tool catalog
+   - Workflows       - Cost tracking - Built-in tools
+   - Memory (7)      - Multi-model   - Document RAG
+   - Platform seed   - Anthropic/OAI - Web search
+          |
+    NATS JetStream (:4222)
+          |
+  +-------+-------+--------+----------+
+  |       |       |        |          |
+Tenant  Model  Governance Metering Onboarding
+:8000   Reg    :8004      :8007    :8006
+        :8001</div>
+  </div>
+</section>
+
+<!-- Memory -->
+<section class="memory">
+  <div class="container">
+    <h2>Intelligent Agent Memory</h2>
+    <p class="subtitle">7 memory types, auto-populated, tenant-isolated, with LLM-powered extraction and summarization.</p>
+    <div class="memory-grid">
+      <div class="memory-card">
+        <div class="icon">&#128172;</div>
+        <h4>Conversational</h4>
+        <p>Chat history for context continuity</p>
+      </div>
+      <div class="memory-card">
+        <div class="icon">&#127991;&#65039;</div>
+        <h4>Entities</h4>
+        <p>Auto-extracted people, orgs, tech</p>
+      </div>
+      <div class="memory-card">
+        <div class="icon">&#128203;</div>
+        <h4>Summaries</h4>
+        <p>LLM-compressed conversations</p>
+      </div>
+      <div class="memory-card">
+        <div class="icon">&#128295;</div>
+        <h4>Tool Logs</h4>
+        <p>Tool call audit trail</p>
+      </div>
+      <div class="memory-card">
+        <div class="icon">&#128202;</div>
+        <h4>Workflow</h4>
+        <p>Execution state snapshots</p>
+      </div>
+      <div class="memory-card">
+        <div class="icon">&#129520;</div>
+        <h4>Toolbox</h4>
+        <p>Registered tool inventory</p>
+      </div>
+      <div class="memory-card">
+        <div class="icon">&#128218;</div>
+        <h4>Knowledge Base</h4>
+        <p>Document embeddings via RAG</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Services Table -->
+<section class="services">
+  <div class="container">
+    <h2>Service Overview</h2>
+    <table class="service-table">
+      <thead>
+        <tr><th>Service</th><th>Port</th><th>Purpose</th><th>Tech</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Portal</strong></td><td><span class="port">3000</span></td><td>React dashboard for tenants and admins</td><td>React 19, Vite, Tailwind</td></tr>
+        <tr><td><strong>Workflow Engine</strong></td><td><span class="port">8003</span></td><td>Agent lifecycle, workflow execution, memory</td><td>FastAPI, Python 3.11+</td></tr>
+        <tr><td><strong>Model Gateway</strong></td><td><span class="port">8002</span></td><td>LLM routing with cost tracking</td><td>FastAPI, httpx</td></tr>
+        <tr><td><strong>MCP Manager</strong></td><td><span class="port">8005</span></td><td>Tool catalog, invocation, document pipeline</td><td>FastAPI, MCP JSON-RPC</td></tr>
+        <tr><td><strong>Tenant Service</strong></td><td><span class="port">8000</span></td><td>Org, team, and project management</td><td>FastAPI, SQLAlchemy</td></tr>
+        <tr><td><strong>Model Registry</strong></td><td><span class="port">8001</span></td><td>Model catalog and versioning</td><td>FastAPI, PostgreSQL</td></tr>
+        <tr><td><strong>Governance</strong></td><td><span class="port">8004</span></td><td>Policy enforcement and budgets</td><td>FastAPI, NATS</td></tr>
+        <tr><td><strong>Metering</strong></td><td><span class="port">8007</span></td><td>Usage aggregation and cost analytics</td><td>FastAPI</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta">
+  <div class="container">
+    <h2>Get Started in 3 Commands</h2>
+    <p>From clone to running platform in under 5 minutes.</p>
+    <div class="code-block">
+<span class="comment"># Clone and start</span>
+<span class="cmd">git clone</span> git@github.com:nbalawat/ngen-platform.git
+<span class="cmd">cd</span> ngen-platform
+<span class="cmd">docker compose</span> -f infrastructure/docker-compose/docker-compose.yaml up -d
+
+<span class="comment"># Open http://localhost:3000</span>
+    </div>
+    <a href="https://github.com/nbalawat/ngen-platform" class="btn btn-primary">
+      Star on GitHub
+    </a>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p>NGEN Platform &middot; MIT License &middot; <a href="https://github.com/nbalawat/ngen-platform">GitHub</a></p>
+  </div>
+</footer>
+
+</body>
+</html>
