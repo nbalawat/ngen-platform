@@ -45,6 +45,22 @@ NGEN Platform provides a complete infrastructure for organizations to create AI 
 
 ---
 
+## Screenshots
+
+| Dashboard | Platform Agents |
+|:-:|:-:|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Agents](docs/screenshots/agents.png) |
+
+| Agent Test Bench | Tool Catalog |
+|:-:|:-:|
+| ![Test Bench](docs/screenshots/agent-testbench.png) | ![Tools](docs/screenshots/tools.png) |
+
+| Workflow Builder | Memory Observatory |
+|:-:|:-:|
+| ![Workflows](docs/screenshots/workflows.png) | ![Memory](docs/screenshots/memory.png) |
+
+---
+
 ## Architecture
 
 ```
