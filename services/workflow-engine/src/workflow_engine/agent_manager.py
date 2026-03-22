@@ -111,25 +111,34 @@ class ManagedAgent:
 
 
 class AgentRegistry:
-    """Tracks managed agent instances."""
+    """Tracks managed agent instances, scoped by tenant.
+
+    Agents are keyed by ``{tenant_id}:{agent_name}`` to prevent
+    cross-tenant name collisions and ensure complete isolation.
+    """
 
     def __init__(self) -> None:
         self._agents: dict[str, ManagedAgent] = {}
 
-    def register(self, agent: ManagedAgent) -> None:
-        self._agents[agent.name] = agent
+    @staticmethod
+    def _key(tenant_id: str, name: str) -> str:
+        return f"{tenant_id}:{name}"
 
-    def get(self, name: str) -> ManagedAgent | None:
-        return self._agents.get(name)
+    def register(self, agent: ManagedAgent, tenant_id: str = "default") -> None:
+        self._agents[self._key(tenant_id, agent.name)] = agent
 
-    def list(self) -> list[ManagedAgent]:
-        return list(self._agents.values())
+    def get(self, name: str, tenant_id: str = "default") -> ManagedAgent | None:
+        return self._agents.get(self._key(tenant_id, name))
 
-    def remove(self, name: str) -> bool:
-        return self._agents.pop(name, None) is not None
+    def list(self, tenant_id: str = "default") -> list[ManagedAgent]:
+        prefix = f"{tenant_id}:"
+        return [a for k, a in self._agents.items() if k.startswith(prefix)]
 
-    def increment_invocations(self, name: str) -> None:
-        agent = self._agents.get(name)
+    def remove(self, name: str, tenant_id: str = "default") -> bool:
+        return self._agents.pop(self._key(tenant_id, name), None) is not None
+
+    def increment_invocations(self, name: str, tenant_id: str = "default") -> None:
+        agent = self._agents.get(self._key(tenant_id, name))
         if agent:
             agent.invocation_count += 1
 
@@ -201,11 +210,12 @@ def _publish_memory_event(
 
 @agent_router.post("", status_code=201, response_model=AgentInfo)
 async def create_agent(body: AgentCreateRequest, request: Request) -> AgentInfo:
-    """Create a standalone managed agent."""
+    """Create a standalone managed agent, scoped to the caller's tenant."""
     executor = _get_executor(request)
     registry = _get_registry(request)
+    tenant_id = _get_tenant_id(request)
 
-    if registry.get(body.name) is not None:
+    if registry.get(body.name, tenant_id) is not None:
         raise HTTPException(
             status_code=409,
             detail=f"Agent '{body.name}' already exists",
@@ -229,7 +239,7 @@ async def create_agent(body: AgentCreateRequest, request: Request) -> AgentInfo:
         model=body.model,
         system_prompt=body.system_prompt,
     )
-    registry.register(managed)
+    registry.register(managed, tenant_id)
 
     from ngen_common.events import Subjects
     _publish_agent_event(request, Subjects.LIFECYCLE_AGENT_CREATED, {
@@ -250,9 +260,10 @@ async def create_agent(body: AgentCreateRequest, request: Request) -> AgentInfo:
 
 @agent_router.get("", response_model=list[AgentInfo])
 async def list_agents(request: Request, search: str = "") -> list[AgentInfo]:
-    """List all managed agents. Optionally filter by name or description."""
+    """List managed agents for the caller's tenant. Optionally filter by search."""
     registry = _get_registry(request)
-    agents = registry.list()
+    tenant_id = _get_tenant_id(request)
+    agents = registry.list(tenant_id)
     if search:
         q = search.lower()
         agents = [a for a in agents if q in a.name.lower() or q in a.description.lower()]
@@ -273,9 +284,10 @@ async def list_agents(request: Request, search: str = "") -> list[AgentInfo]:
 
 @agent_router.get("/{agent_name}", response_model=AgentInfo)
 async def get_agent(agent_name: str, request: Request) -> AgentInfo:
-    """Get details of a managed agent."""
+    """Get details of a managed agent, scoped to caller's tenant."""
     registry = _get_registry(request)
-    agent = registry.get(agent_name)
+    tenant_id = _get_tenant_id(request)
+    agent = registry.get(agent_name, tenant_id)
     if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
     return AgentInfo(
@@ -294,11 +306,12 @@ async def get_agent(agent_name: str, request: Request) -> AgentInfo:
 async def invoke_agent(
     agent_name: str, body: AgentInvokeRequest, request: Request,
 ) -> AgentInvokeResponse:
-    """Invoke a managed agent and return its events."""
+    """Invoke a managed agent, scoped to caller's tenant."""
     executor = _get_executor(request)
     registry = _get_registry(request)
+    tenant_id = _get_tenant_id(request)
 
-    agent = registry.get(agent_name)
+    agent = registry.get(agent_name, tenant_id)
     if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
 
@@ -381,7 +394,7 @@ async def invoke_agent(
             token_estimate=len(output_text) // 4,
         )
 
-    registry.increment_invocations(agent_name)
+    registry.increment_invocations(agent_name, tenant_id)
 
     return AgentInvokeResponse(
         agent_name=agent_name,
@@ -392,11 +405,12 @@ async def invoke_agent(
 
 @agent_router.delete("/{agent_name}", status_code=204)
 async def delete_agent(agent_name: str, request: Request) -> None:
-    """Tear down and remove a managed agent."""
+    """Tear down and remove a managed agent, scoped to caller's tenant."""
     executor = _get_executor(request)
     registry = _get_registry(request)
+    tenant_id = _get_tenant_id(request)
 
-    agent = registry.get(agent_name)
+    agent = registry.get(agent_name, tenant_id)
     if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
 
@@ -405,7 +419,7 @@ async def delete_agent(agent_name: str, request: Request) -> None:
     except Exception:
         logger.warning("Error tearing down agent '%s'", agent_name, exc_info=True)
 
-    registry.remove(agent_name)
+    registry.remove(agent_name, tenant_id)
 
     from ngen_common.events import Subjects
     _publish_agent_event(request, Subjects.LIFECYCLE_AGENT_DELETED, {
@@ -427,9 +441,18 @@ def _get_memory_store(request: Request) -> InMemoryMemoryStore:
     return store
 
 
+def _get_tenant_id(request: Request) -> str:
+    """Extract tenant ID from JWT identity, header, or default."""
+    identity = getattr(request.state, "identity", None)
+    if identity and hasattr(identity, "tenant_id") and identity.tenant_id:
+        return identity.tenant_id
+    return request.headers.get("x-tenant-id", "default")
+
+
 def _extract_tenant(request: Request) -> tuple[str, str, str]:
-    """Extract tenant context from request headers or defaults."""
-    org_id = request.headers.get("x-org-id", "default")
+    """Extract tenant context from JWT identity, headers, or defaults."""
+    tenant_id = _get_tenant_id(request)
+    org_id = request.headers.get("x-org-id", tenant_id)
     team_id = request.headers.get("x-team-id", "default")
     project_id = request.headers.get("x-project-id", "default")
     return org_id, team_id, project_id
