@@ -64,7 +64,7 @@ class TestStreamSequential:
 
     async def test_stream_contains_agent_events(self, client, make_crd, crd_to_yaml):
         crd = make_crd(
-            agents=["agent-a"],
+            agents=["agent-a", "agent-b"],
             topology=TopologyType.SEQUENTIAL,
         )
         lines = []
@@ -136,7 +136,7 @@ class TestStreamInvalidInput:
 
 class TestStreamRunTracked:
     async def test_run_appears_in_list(self, client, make_crd, crd_to_yaml):
-        crd = make_crd(agents=["agent-a"])
+        crd = make_crd(agents=["agent-a", "agent-b"])
         lines = []
         async with client.stream(
             "POST",

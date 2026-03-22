@@ -5,7 +5,7 @@ import { tenantApi } from '../../api/tenantApi';
 import { meteringApi } from '../../api/meteringApi';
 import { agentApi } from '../../api/agentApi';
 import { apiFetch } from '../../api/client';
-import type { TenantUsage } from '../../types/metering';
+// TenantUsage type available via metering API responses
 
 interface WorkflowRun {
   run_id: string;
@@ -51,7 +51,8 @@ export function AdminDashboard() {
   const orgs = useQuery({ queryKey: queryKeys.orgs.all, queryFn: tenantApi.listOrgs });
   const agents = useQuery({ queryKey: queryKeys.agents.all, queryFn: agentApi.list });
   const allUsage = useQuery({ queryKey: ['usage', 'all'], queryFn: meteringApi.listUsage, refetchInterval: 10000 });
-  const summary = useQuery({ queryKey: queryKeys.usage.summary, queryFn: meteringApi.getSummary, refetchInterval: 10000 });
+  const _summary = useQuery({ queryKey: queryKeys.usage.summary, queryFn: meteringApi.getSummary, refetchInterval: 10000 });
+  void _summary; // prefetch for cache
   const runs = useQuery({ queryKey: queryKeys.workflows.runs, queryFn: () => apiFetch<WorkflowRun[]>(`${API.workflow}/workflows/runs`), refetchInterval: 10000 });
   const policies = useQuery({ queryKey: queryKeys.policies.all, queryFn: () => apiFetch<Policy[]>(`${API.governance}/api/v1/policies`) });
   const budgets = useQuery({ queryKey: queryKeys.budgets.all, queryFn: () => apiFetch<BudgetSpend[]>(`${API.governance}/api/v1/budgets`), refetchInterval: 10000 });

@@ -148,3 +148,155 @@ class TestMeteringEndpoints:
         assert "hourly_cost" in data
         assert "daily_cost" in data
         await tracker.stop(bus)
+
+
+class TestMemoryUsageTracking:
+    async def test_tracks_memory_written(self, bus, tracker):
+        await tracker.start(bus)
+        await bus.publish("memory.written", {
+            "tenant_id": "acme",
+            "agent_name": "bot-a",
+            "memory_type": "conversational",
+            "size_bytes": 128,
+            "token_estimate": 32,
+            "entry_count": 1,
+        })
+
+        usage = tracker.get_tenant("acme")
+        assert usage is not None
+        assert usage.memory_entries == 1
+        assert usage.memory_bytes == 128
+        assert usage.memory_tokens == 32
+        assert usage.memory_by_agent["bot-a"]["entries"] == 1
+        assert usage.memory_by_agent["bot-a"]["bytes"] == 128
+        assert usage.memory_by_type["conversational"] == 1
+        await tracker.stop(bus)
+
+    async def test_tracks_multiple_agents(self, bus, tracker):
+        await tracker.start(bus)
+        await bus.publish("memory.written", {
+            "tenant_id": "acme", "agent_name": "bot-a",
+            "memory_type": "conversational",
+            "size_bytes": 100, "token_estimate": 25, "entry_count": 1,
+        })
+        await bus.publish("memory.written", {
+            "tenant_id": "acme", "agent_name": "bot-b",
+            "memory_type": "tool_log",
+            "size_bytes": 200, "token_estimate": 50, "entry_count": 1,
+        })
+
+        usage = tracker.get_tenant("acme")
+        assert usage.memory_entries == 2
+        assert usage.memory_bytes == 300
+        assert usage.memory_by_agent["bot-a"]["entries"] == 1
+        assert usage.memory_by_agent["bot-b"]["entries"] == 1
+        assert usage.memory_by_type["conversational"] == 1
+        assert usage.memory_by_type["tool_log"] == 1
+        await tracker.stop(bus)
+
+    async def test_tracks_memory_deleted(self, bus, tracker):
+        await tracker.start(bus)
+        await bus.publish("memory.written", {
+            "tenant_id": "acme", "agent_name": "bot-a",
+            "memory_type": "conversational",
+            "size_bytes": 100, "token_estimate": 25, "entry_count": 3,
+        })
+        await bus.publish("memory.deleted", {
+            "tenant_id": "acme", "agent_name": "bot-a",
+            "memory_type": "conversational",
+            "entry_count": 2,
+        })
+
+        usage = tracker.get_tenant("acme")
+        assert usage.memory_entries == 1
+        assert usage.memory_by_agent["bot-a"]["entries"] == 1
+        await tracker.stop(bus)
+
+    async def test_deleted_clamps_to_zero(self, bus, tracker):
+        await tracker.start(bus)
+        await bus.publish("memory.deleted", {
+            "tenant_id": "acme", "agent_name": "bot-a",
+            "memory_type": "all",
+            "entry_count": 10,
+        })
+
+        usage = tracker.get_tenant("acme")
+        assert usage.memory_entries == 0
+        await tracker.stop(bus)
+
+    async def test_summary_includes_memory(self, bus, tracker):
+        await tracker.start(bus)
+        await bus.publish("memory.written", {
+            "tenant_id": "acme", "agent_name": "bot-a",
+            "memory_type": "conversational",
+            "size_bytes": 500, "token_estimate": 125, "entry_count": 5,
+        })
+
+        summary = tracker.get_summary()
+        assert summary["total_memory_entries"] == 5
+        assert summary["total_memory_bytes"] == 500
+        assert summary["total_memory_tokens"] == 125
+        await tracker.stop(bus)
+
+
+class TestMemoryMeteringEndpoints:
+    async def test_tenant_memory_usage_empty(self, client):
+        resp = await client.get("/api/v1/usage/unknown/memory")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["memory_entries"] == 0
+
+    async def test_tenant_memory_usage_after_events(self, client, bus, tracker):
+        await tracker.start(bus)
+        await bus.publish("memory.written", {
+            "tenant_id": "acme", "agent_name": "bot-a",
+            "memory_type": "conversational",
+            "size_bytes": 256, "token_estimate": 64, "entry_count": 2,
+        })
+
+        resp = await client.get("/api/v1/usage/acme/memory")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["memory_entries"] == 2
+        assert data["memory_bytes"] == 256
+        assert data["memory_tokens"] == 64
+        assert "bot-a" in data["by_agent"]
+        assert data["by_type"]["conversational"] == 2
+        await tracker.stop(bus)
+
+    async def test_platform_memory_summary(self, client, bus, tracker):
+        await tracker.start(bus)
+        for tenant in ["acme", "globex"]:
+            await bus.publish("memory.written", {
+                "tenant_id": tenant, "agent_name": "bot",
+                "memory_type": "conversational",
+                "size_bytes": 100, "token_estimate": 25, "entry_count": 1,
+            })
+
+        resp = await client.get("/api/v1/usage/memory/summary")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total_memory_entries"] == 2
+        assert data["tenants_with_memory"] == 2
+        assert "acme" in data["by_tenant"]
+        assert "globex" in data["by_tenant"]
+        await tracker.stop(bus)
+
+    async def test_existing_usage_includes_memory_fields(self, client, bus, tracker):
+        await tracker.start(bus)
+        await bus.publish("cost.recorded", {
+            "tenant_id": "acme", "model": "claude",
+            "total_cost": 0.05, "total_tokens": 500,
+        })
+        await bus.publish("memory.written", {
+            "tenant_id": "acme", "agent_name": "bot",
+            "memory_type": "conversational",
+            "size_bytes": 100, "token_estimate": 25, "entry_count": 1,
+        })
+
+        resp = await client.get("/api/v1/usage/acme")
+        data = resp.json()
+        assert data["total_cost"] == 0.05
+        assert data["memory_entries"] == 1
+        assert data["memory_bytes"] == 100
+        await tracker.stop(bus)

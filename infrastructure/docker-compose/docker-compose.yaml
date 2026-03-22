@@ -110,6 +110,8 @@ services:
       context: ../..
       dockerfile: services/model-gateway/Dockerfile
     container_name: ngen-model-gateway
+    env_file:
+      - ../../.env
     environment:
       NGEN_GATEWAY_DEFAULT_UPSTREAM_URL: http://mock-llm:9100
       NGEN_GATEWAY_DEBUG: "true"
@@ -137,6 +139,8 @@ services:
     container_name: ngen-workflow-engine
     environment:
       WF_MODEL_GATEWAY_URL: http://model-gateway:8002
+      WF_MCP_MANAGER_URL: http://mcp-manager:8005
+      NGEN_DEFAULT_MODEL: claude-sonnet-4-6
       WF_LOG_LEVEL: INFO
       NATS_URL: nats://nats:4222
     ports:
@@ -182,6 +186,11 @@ services:
     environment:
       NGEN_MCP_DEBUG: "true"
       NATS_URL: nats://nats:4222
+      MODEL_GATEWAY_URL: http://model-gateway:8002
+      NGEN_DOCUMENT_STORE_PATH: /app/data/documents
+      VISION_AGENT_API_KEY: ${VISION_AGENT_API_KEY:-}
+    volumes:
+      - document_data:/app/data/documents
     ports:
       - "8005:8005"
     depends_on:
@@ -256,3 +265,4 @@ services:
 volumes:
   postgres_data:
   nats_data:
+  document_data:

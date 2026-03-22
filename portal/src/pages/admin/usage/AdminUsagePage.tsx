@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { meteringApi } from '../../../api/meteringApi';
 import { formatCost, formatTokens } from '../../../lib/utils';
-import type { TenantUsage } from '../../../types/metering';
+// TenantUsage type available via metering API responses
 
 export function AdminUsagePage() {
   const [selectedTenant, setSelectedTenant] = useState<string | null>(null);

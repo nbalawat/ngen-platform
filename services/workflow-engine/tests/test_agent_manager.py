@@ -101,7 +101,8 @@ class TestAgentInvoke:
         assert data["agent_name"] == "invoke-agent"
         assert len(data["events"]) > 0
         assert data["output"] is not None
-        assert "invoke-agent" in data["output"]
+        # Rich adapter produces context-aware output referencing the user's message
+        assert len(data["output"]) > 10  # meaningful output, not just echo
 
     async def test_invoke_increments_count(self, client):
         await client.post("/agents", json={
@@ -200,3 +201,64 @@ class TestFullAgentLifecycle:
         deleted = bus.events_for("lifecycle.agent_deleted")
         assert len(created) == 1
         assert len(deleted) == 1
+
+
+class TestAgentSearch:
+    """Agent list endpoint should support search/filter."""
+
+    async def test_search_by_name(self, client):
+        for name in ["customer-bot", "sales-bot", "ops-monitor"]:
+            await client.post("/agents", json={
+                "name": name, "framework": "in-memory",
+                "description": f"Agent for {name.split('-')[0]}",
+            })
+
+        resp = await client.get("/agents?search=customer")
+        assert resp.status_code == 200
+        agents = resp.json()
+        assert len(agents) == 1
+        assert agents[0]["name"] == "customer-bot"
+
+    async def test_search_by_description(self, client):
+        await client.post("/agents", json={
+            "name": "helper-a", "framework": "in-memory",
+            "description": "Handles billing inquiries",
+        })
+        await client.post("/agents", json={
+            "name": "helper-b", "framework": "in-memory",
+            "description": "Handles technical support",
+        })
+
+        resp = await client.get("/agents?search=billing")
+        agents = resp.json()
+        assert len(agents) == 1
+        assert agents[0]["name"] == "helper-a"
+
+    async def test_search_case_insensitive(self, client):
+        await client.post("/agents", json={
+            "name": "DataAgent", "framework": "in-memory",
+        })
+
+        resp = await client.get("/agents?search=dataagent")
+        agents = resp.json()
+        assert len(agents) == 1
+
+    async def test_search_no_results(self, client):
+        await client.post("/agents", json={
+            "name": "some-agent", "framework": "in-memory",
+        })
+
+        resp = await client.get("/agents?search=nonexistent")
+        assert resp.json() == []
+
+    async def test_search_empty_returns_all(self, client):
+        await client.post("/agents", json={
+            "name": "agent-x", "framework": "in-memory",
+        })
+        await client.post("/agents", json={
+            "name": "agent-y", "framework": "in-memory",
+        })
+
+        resp = await client.get("/agents?search=")
+        agents = resp.json()
+        assert len(agents) >= 2

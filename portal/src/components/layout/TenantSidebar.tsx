@@ -7,6 +7,8 @@ const navItems = [
   { label: 'Tools', path: '/app/discover/tools', icon: '🔧' },
   { label: 'Agents', path: '/app/agents', icon: '🧠' },
   { label: 'Workflows', path: '/app/workflows', icon: '⚡' },
+  { label: 'Knowledge Base', path: '/app/knowledge', icon: '📚' },
+  { label: 'Memory', path: '/app/memory', icon: '💾' },
   { label: 'MCP Servers', path: '/app/tools', icon: '🔌' },
   { label: 'Policies', path: '/app/governance/policies', icon: '🛡️' },
   { label: 'Budgets', path: '/app/governance/budgets', icon: '💰' },

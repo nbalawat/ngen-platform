@@ -2,31 +2,37 @@ import { useQuery } from '@tanstack/react-query';
 import { queryKeys } from '../../../lib/constants';
 import { formatCost, formatTokens } from '../../../lib/utils';
 import { meteringApi } from '../../../api/meteringApi';
+import { tenantApi } from '../../../api/tenantApi';
 
 export function TenantUsagePage() {
-  const { data: allUsage } = useQuery({
-    queryKey: ['usage', 'all'],
-    queryFn: () => meteringApi.listUsage(),
+  // Get current tenant context (use first org as fallback)
+  const { data: orgs } = useQuery({
+    queryKey: queryKeys.orgs.all,
+    queryFn: tenantApi.listOrgs,
+  });
+  const tenantId = orgs && orgs.length > 0 ? orgs[0].id : 'default';
+
+  const { data: usage, isLoading } = useQuery({
+    queryKey: queryKeys.usage.tenant(tenantId),
+    queryFn: () => meteringApi.getUsage(tenantId),
+    enabled: !!tenantId,
     refetchInterval: 15000,
   });
-
-  // Pick the first tenant with data, or aggregate all
-  const usage = allUsage && allUsage.length > 0 ? allUsage[0] : null;
-  const isLoading = !allUsage;
 
   return (
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Usage & Cost</h1>
-        <p className="text-sm text-gray-500 mt-1">Monitor your API usage and cost breakdown</p>
+        <p className="text-sm text-gray-500 mt-1">Monitor your workspace API usage and cost breakdown</p>
       </div>
 
       {isLoading ? (
         <div className="flex items-center justify-center py-20"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" /></div>
-      ) : !usage ? (
+      ) : !usage || (usage.total_cost === 0 && usage.total_tokens === 0 && usage.total_requests === 0) ? (
         <div className="text-center py-20 bg-white rounded-xl border border-gray-200">
           <span className="text-4xl">📊</span>
           <h3 className="mt-3 text-lg font-medium text-gray-900">No usage data yet</h3>
+          <p className="mt-1 text-sm text-gray-500">Invoke agents or run workflows to see your usage here</p>
         </div>
       ) : (
         <>

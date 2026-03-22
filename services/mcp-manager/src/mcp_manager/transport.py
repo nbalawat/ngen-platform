@@ -17,6 +17,7 @@ from uuid import uuid4
 
 import httpx
 
+from mcp_manager.builtin_registry import BuiltinHandlerRegistry
 from mcp_manager.models import AuthConfig, AuthType, Server, TransportType
 
 logger = logging.getLogger(__name__)
@@ -43,30 +44,79 @@ class MCPTransport:
         self,
         client: httpx.AsyncClient | None = None,
         timeout: float = 30.0,
+        builtin_registry: BuiltinHandlerRegistry | None = None,
     ) -> None:
         self._client = client
         self._timeout = timeout
         self._owns_client = False
+        self._builtin_registry = builtin_registry
 
     async def invoke(
         self,
         server: Server,
         tool_name: str,
         arguments: dict[str, Any],
+        namespace: str = "default",
     ) -> dict[str, Any]:
         """Invoke a tool on an MCP server.
 
         Returns the result dict from the JSON-RPC response.
         Raises MCPTransportError on failure.
         """
-        if server.transport == TransportType.STREAMABLE_HTTP:
-            return await self._invoke_http(server, tool_name, arguments)
-        elif server.transport == TransportType.SSE:
+        if server.transport == TransportType.BUILTIN:
+            return await self._invoke_builtin(server, tool_name, arguments, namespace)
+        elif server.transport in (TransportType.STREAMABLE_HTTP, TransportType.SSE):
             return await self._invoke_http(server, tool_name, arguments)
         else:
             raise MCPTransportError(
                 f"Transport '{server.transport}' not supported for remote invocation"
             )
+
+    async def _invoke_builtin(
+        self,
+        server: Server,
+        tool_name: str,
+        arguments: dict[str, Any],
+        namespace: str = "default",
+    ) -> dict[str, Any]:
+        """Dispatch to a built-in handler function."""
+        if self._builtin_registry is None:
+            raise MCPTransportError(
+                f"No built-in handler registry configured for server '{server.name}'"
+            )
+
+        handler = self._builtin_registry.get(server.name, tool_name)
+        if handler is None:
+            raise MCPTransportError(
+                f"No built-in handler registered for '{server.name}/{tool_name}'"
+            )
+
+        try:
+            # Inject namespace for tenant scoping
+            arguments_with_ns = {**arguments, "_namespace": namespace}
+            result = await handler(arguments_with_ns)
+            # Ensure result is in MCP content format
+            if isinstance(result, dict) and "content" in result:
+                texts = []
+                for block in result["content"]:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        texts.append(block.get("text", ""))
+                if texts:
+                    return {"content": result["content"], "text": "\n".join(texts)}
+                return result
+            # Wrap plain text result
+            if isinstance(result, str):
+                return {
+                    "content": [{"type": "text", "text": result}],
+                    "text": result,
+                }
+            return result
+        except MCPTransportError:
+            raise
+        except Exception as exc:
+            raise MCPTransportError(
+                f"Built-in handler error for '{server.name}/{tool_name}': {exc}"
+            ) from exc
 
     async def _invoke_http(
         self,

@@ -14,7 +14,7 @@ from ngen_common.events import InMemoryEventBus, Subjects
 class TestWorkflowStartedEvent:
     async def test_run_publishes_started(self, client, app, make_crd, crd_to_yaml):
         bus: InMemoryEventBus = app.state.event_bus
-        crd = make_crd(agents=["agent-a"])
+        crd = make_crd(agents=["agent-a", "agent-b"])
 
         resp = await client.post("/workflows/run", json={
             "workflow_yaml": crd_to_yaml(crd),
@@ -26,7 +26,7 @@ class TestWorkflowStartedEvent:
         assert len(events) >= 1
         data = events[0].data
         assert data["workflow_name"] == "test-workflow"
-        assert data["agent_count"] == 1
+        assert data["agent_count"] == 2
 
     async def test_stream_publishes_started(self, client, app, make_crd, crd_to_yaml):
         bus: InMemoryEventBus = app.state.event_bus
@@ -48,7 +48,7 @@ class TestWorkflowStartedEvent:
 
     async def test_started_event_source(self, client, app, make_crd, crd_to_yaml):
         bus: InMemoryEventBus = app.state.event_bus
-        crd = make_crd(agents=["agent-a"])
+        crd = make_crd(agents=["agent-a", "agent-b"])
 
         await client.post("/workflows/run", json={
             "workflow_yaml": crd_to_yaml(crd),
@@ -61,7 +61,7 @@ class TestWorkflowStartedEvent:
 class TestWorkflowCompletedEvent:
     async def test_run_publishes_completed(self, client, app, make_crd, crd_to_yaml):
         bus: InMemoryEventBus = app.state.event_bus
-        crd = make_crd(agents=["agent-a"])
+        crd = make_crd(agents=["agent-a", "agent-b"])
 
         resp = await client.post("/workflows/run", json={
             "workflow_yaml": crd_to_yaml(crd),
@@ -77,7 +77,7 @@ class TestWorkflowCompletedEvent:
 
     async def test_stream_publishes_completed(self, client, app, make_crd, crd_to_yaml):
         bus: InMemoryEventBus = app.state.event_bus
-        crd = make_crd(agents=["agent-a"])
+        crd = make_crd(agents=["agent-a", "agent-b"])
 
         lines = []
         async with client.stream(

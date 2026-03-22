@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { queryKeys, API } from '../../../lib/constants';
-import { formatCost, formatTokens, formatRelative } from '../../../lib/utils';
+import { formatCost, formatTokens } from '../../../lib/utils';
 import { tenantApi } from '../../../api/tenantApi';
 import { meteringApi } from '../../../api/meteringApi';
 import { agentApi } from '../../../api/agentApi';

@@ -47,6 +47,14 @@ class TenantUsage:
     hourly_cost: dict[str, float] = field(default_factory=lambda: defaultdict(float))
     daily_cost: dict[str, float] = field(default_factory=lambda: defaultdict(float))
     last_request_at: float = 0.0
+    # Memory usage tracking
+    memory_entries: int = 0
+    memory_bytes: int = 0
+    memory_tokens: int = 0
+    memory_by_agent: dict[str, dict[str, int]] = field(
+        default_factory=lambda: defaultdict(lambda: {"entries": 0, "bytes": 0, "tokens": 0})
+    )
+    memory_by_type: dict[str, int] = field(default_factory=lambda: defaultdict(int))
 
 
 class UsageTracker:
@@ -54,20 +62,27 @@ class UsageTracker:
 
     def __init__(self) -> None:
         self._tenants: dict[str, TenantUsage] = {}
-        self._subscription_id: str | None = None
+        self._cost_sub_id: str | None = None
+        self._memory_sub_id: str | None = None
 
     async def start(self, bus: EventBus) -> None:
-        """Subscribe to cost events."""
-        self._subscription_id = await bus.subscribe(
+        """Subscribe to cost and memory events."""
+        self._cost_sub_id = await bus.subscribe(
             "cost.*", self._handle_cost_event,
         )
-        logger.info("UsageTracker subscribed to cost.* events")
+        self._memory_sub_id = await bus.subscribe(
+            "memory.*", self._handle_memory_event,
+        )
+        logger.info("UsageTracker subscribed to cost.* and memory.* events")
 
     async def stop(self, bus: EventBus) -> None:
-        """Unsubscribe from cost events."""
-        if self._subscription_id:
-            await bus.unsubscribe(self._subscription_id)
-            self._subscription_id = None
+        """Unsubscribe from events."""
+        if self._cost_sub_id:
+            await bus.unsubscribe(self._cost_sub_id)
+            self._cost_sub_id = None
+        if self._memory_sub_id:
+            await bus.unsubscribe(self._memory_sub_id)
+            self._memory_sub_id = None
 
     async def _handle_cost_event(self, subject: str, data: dict[str, Any]) -> None:
         """Process a cost.recorded event."""
@@ -94,6 +109,34 @@ class UsageTracker:
         usage.hourly_cost[hour_key] += total_cost
         usage.daily_cost[day_key] += total_cost
 
+    async def _handle_memory_event(self, subject: str, data: dict[str, Any]) -> None:
+        """Process memory.written / memory.deleted / memory.expired events."""
+        tenant_id = data.get("tenant_id", "unknown")
+        agent_name = data.get("agent_name", "unknown")
+        memory_type = data.get("memory_type", "unknown")
+        size_bytes = data.get("size_bytes", 0)
+        token_estimate = data.get("token_estimate", 0)
+        entry_count = data.get("entry_count", 1)
+
+        usage = self._tenants.get(tenant_id)
+        if usage is None:
+            usage = TenantUsage(tenant_id=tenant_id)
+            self._tenants[tenant_id] = usage
+
+        if subject == "memory.written":
+            usage.memory_entries += entry_count
+            usage.memory_bytes += size_bytes
+            usage.memory_tokens += token_estimate
+            agent_stats = usage.memory_by_agent[agent_name]
+            agent_stats["entries"] += entry_count
+            agent_stats["bytes"] += size_bytes
+            agent_stats["tokens"] += token_estimate
+            usage.memory_by_type[memory_type] += entry_count
+        elif subject in ("memory.deleted", "memory.expired"):
+            usage.memory_entries = max(0, usage.memory_entries - entry_count)
+            agent_stats = usage.memory_by_agent[agent_name]
+            agent_stats["entries"] = max(0, agent_stats["entries"] - entry_count)
+
     def get_tenant(self, tenant_id: str) -> TenantUsage | None:
         return self._tenants.get(tenant_id)
 
@@ -105,11 +148,17 @@ class UsageTracker:
         total_cost = sum(t.total_cost for t in self._tenants.values())
         total_tokens = sum(t.total_tokens for t in self._tenants.values())
         total_requests = sum(t.total_requests for t in self._tenants.values())
+        total_memory_entries = sum(t.memory_entries for t in self._tenants.values())
+        total_memory_bytes = sum(t.memory_bytes for t in self._tenants.values())
+        total_memory_tokens = sum(t.memory_tokens for t in self._tenants.values())
         return {
             "tenant_count": len(self._tenants),
             "total_cost": round(total_cost, 6),
             "total_tokens": total_tokens,
             "total_requests": total_requests,
+            "total_memory_entries": total_memory_entries,
+            "total_memory_bytes": total_memory_bytes,
+            "total_memory_tokens": total_memory_tokens,
         }
 
 
@@ -173,12 +222,60 @@ def create_app(
             "hourly_cost": dict(usage.hourly_cost),
             "daily_cost": dict(usage.daily_cost),
             "last_request_at": usage.last_request_at,
+            "memory_entries": usage.memory_entries,
+            "memory_bytes": usage.memory_bytes,
+            "memory_tokens": usage.memory_tokens,
         }
 
     @application.get("/api/v1/usage/summary")
     async def get_summary() -> dict:
         """Platform-wide usage summary."""
         return tracker.get_summary()
+
+    @application.get("/api/v1/usage/{tenant_id}/memory")
+    async def get_tenant_memory_usage(tenant_id: str) -> dict:
+        """Get memory usage breakdown for a tenant."""
+        usage = tracker.get_tenant(tenant_id)
+        if usage is None:
+            return {
+                "tenant_id": tenant_id,
+                "memory_entries": 0,
+                "memory_bytes": 0,
+                "memory_tokens": 0,
+                "by_agent": {},
+                "by_type": {},
+            }
+        return {
+            "tenant_id": usage.tenant_id,
+            "memory_entries": usage.memory_entries,
+            "memory_bytes": usage.memory_bytes,
+            "memory_tokens": usage.memory_tokens,
+            "by_agent": dict(usage.memory_by_agent),
+            "by_type": dict(usage.memory_by_type),
+        }
+
+    @application.get("/api/v1/usage/memory/summary")
+    async def get_platform_memory_summary() -> dict:
+        """Platform-wide memory usage summary."""
+        total_entries = sum(t.memory_entries for t in tracker.list_tenants())
+        total_bytes = sum(t.memory_bytes for t in tracker.list_tenants())
+        total_tokens = sum(t.memory_tokens for t in tracker.list_tenants())
+        by_tenant = {
+            t.tenant_id: {
+                "memory_entries": t.memory_entries,
+                "memory_bytes": t.memory_bytes,
+                "memory_tokens": t.memory_tokens,
+            }
+            for t in tracker.list_tenants()
+            if t.memory_entries > 0
+        }
+        return {
+            "total_memory_entries": total_entries,
+            "total_memory_bytes": total_bytes,
+            "total_memory_tokens": total_tokens,
+            "tenants_with_memory": len(by_tenant),
+            "by_tenant": by_tenant,
+        }
 
     add_error_handlers(application)
     add_cors(application)

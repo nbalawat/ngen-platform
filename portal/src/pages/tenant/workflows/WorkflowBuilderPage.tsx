@@ -1,540 +1,420 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../../../api/client';
 import { API, queryKeys } from '../../../lib/constants';
+import WorkflowCanvas, {
+  generatedToFlow,
+  flowToYaml,
+} from '../../../components/workflow/WorkflowCanvas';
+import { useWorkflowStream, type WorkflowEvent } from '../../../hooks/useWorkflowStream';
+import type { Node, Edge } from '@xyflow/react';
+import type { AgentNodeData } from '../../../components/workflow/AgentNode';
 
-interface AgentSummary {
+interface GeneratedAgent {
   name: string;
-  framework: string;
-  status: string;
+  role?: string;
+  tools?: string[];
+  needs_creation?: boolean;
 }
 
-interface EdgeDef {
-  from: string;
-  to: string;
-  condition: string;
-}
-
-interface SavedWorkflow {
-  name: string;
-  version_count: number;
-  latest_version: number;
-  description: string;
-  updated_at: number;
-}
-
-interface WorkflowVersionDetail {
+interface GeneratedWorkflow {
+  topology: string;
+  agents: GeneratedAgent[];
+  edges: { from: string; to: string; condition?: string }[];
+  explanation: string;
+  suggested_input: Record<string, unknown>;
   workflow_name: string;
-  version: number;
-  yaml_content: string;
-  input_data: Record<string, unknown>;
-  description: string;
-  created_at: number;
+  workflow_yaml: string;
 }
 
-const TOPOLOGIES = [
-  { value: 'sequential', label: 'Sequential', icon: '➡️', desc: 'Agents execute one after another' },
-  { value: 'parallel', label: 'Parallel', icon: '⚡', desc: 'All agents run concurrently' },
-  { value: 'graph', label: 'Graph (DAG)', icon: '🔀', desc: 'Directed graph with conditional edges' },
-  { value: 'hierarchical', label: 'Hierarchical', icon: '🏗️', desc: 'Supervisor delegates to workers' },
-] as const;
+const STEPS = ['Describe', 'Design', 'Test', 'Save'] as const;
+type Step = typeof STEPS[number];
 
-const TEMPLATES = [
-  { name: 'Research & Summarize', topology: 'sequential', agents: ['researcher', 'summarizer'], input: { query: 'Latest trends in AI agents' }, desc: 'Sequential pipeline' },
-  { name: 'Parallel Analysis', topology: 'parallel', agents: ['sentiment-analyzer', 'topic-extractor', 'entity-detector'], input: { text: 'Analyze this text.' }, desc: 'Concurrent analysis' },
-  { name: 'Triage & Route', topology: 'hierarchical', agents: ['triage-agent', 'billing-agent', 'support-agent'], input: { ticket: 'Billing issue' }, desc: 'Supervisor-worker' },
-  { name: 'Conditional Pipeline', topology: 'graph', agents: ['classifier', 'simple-handler', 'complex-handler'], edges: [{ from: 'classifier', to: 'simple-handler', condition: '' }, { from: 'classifier', to: 'complex-handler', condition: '' }], input: { request: 'Process inquiry' }, desc: 'DAG routing' },
+const EXAMPLE_PROMPTS = [
+  { label: 'Research & Summarize', text: 'Research a topic using web search, analyze the findings, then write a comprehensive summary' },
+  { label: 'Document Analysis', text: 'Parse a document, extract key data points, and generate a structured report' },
+  { label: 'Customer Support Triage', text: 'Classify incoming support tickets and route them to the appropriate specialist agent' },
+  { label: 'Parallel Review', text: 'Analyze a piece of text simultaneously for sentiment, key entities, and topic classification' },
 ];
 
-function generateYaml(name: string, namespace: string, topology: string, agents: string[], edges: EdgeDef[], hitlGate: string, hitlTimeout: number): string {
-  const safeName = (name || 'my-workflow').replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '') || 'my-workflow';
-  const lines: string[] = ['apiVersion: ngen.io/v1', 'kind: Workflow', 'metadata:', `  name: ${safeName}`];
-  if (namespace && namespace !== 'default') lines.push(`  namespace: ${namespace}`);
-  lines.push('spec:', `  topology: ${topology}`, '  agents:');
-  for (const a of agents) { if (a.trim()) lines.push(`  - ref: ${a.trim()}`); }
-  if (topology === 'graph' && edges.length > 0) {
-    lines.push('  edges:');
-    for (const e of edges) {
-      lines.push(`  - from: ${e.from}`, `    to: ${e.to}`);
-      if (e.condition) lines.push(`    condition: "${e.condition}"`);
+/* ── Helpers ─────────────────────────────────────────────────────────── */
+
+interface AgentOutput {
+  name: string;
+  thinking: string;
+  text: string;
+  tools: { name: string; output: string }[];
+  status: 'pending' | 'running' | 'done' | 'error';
+}
+
+function buildAgentOutputs(events: WorkflowEvent[], agentNames: string[]): AgentOutput[] {
+  const map = new Map<string, AgentOutput>();
+  for (const name of agentNames) map.set(name, { name, thinking: '', text: '', tools: [], status: 'pending' });
+
+  for (const ev of events) {
+    const agentName = ev.agent_name || (ev.data?.agent_name as string) || '';
+    if (!agentName) continue;
+    if (!map.has(agentName)) map.set(agentName, { name: agentName, thinking: '', text: '', tools: [], status: 'pending' });
+    const out = map.get(agentName)!;
+
+    if (ev.type === 'thinking') { out.status = 'running'; out.thinking = String((ev.data as Record<string, unknown>)?.text || ''); }
+    else if (ev.type === 'text_delta') { out.status = 'running'; out.text += String((ev.data as Record<string, unknown>)?.text || ''); }
+    else if (ev.type === 'tool_call_start') { out.status = 'running'; out.tools.push({ name: String((ev.data as Record<string, unknown>)?.tool || ''), output: '' }); }
+    else if (ev.type === 'tool_call_end') { const last = out.tools[out.tools.length - 1]; if (last) last.output = String((ev.data as Record<string, unknown>)?.output || '').slice(0, 300); }
+    else if (ev.type === 'done' && agentName) out.status = 'done';
+    else if (ev.type === 'error') out.status = 'error';
+  }
+  return Array.from(map.values());
+}
+
+function extractFinalOutput(result: unknown): string {
+  if (!result || typeof result !== 'object') return '';
+  const r = result as Record<string, unknown>;
+  const keys = Object.keys(r);
+  for (const key of keys.reverse()) {
+    if (key.endsWith('_output') && typeof r[key] === 'object') {
+      const out = r[key] as Record<string, unknown>;
+      if (out.text) return String(out.text);
     }
   }
-  if (hitlGate) { lines.push('  humanInTheLoop:', `    approvalGate: ${hitlGate}`, `    timeoutSeconds: ${hitlTimeout}`); }
-  return lines.join('\n') + '\n';
+  if (r.text) return String(r.text);
+  return JSON.stringify(result, null, 2);
 }
 
-// ---------------------------------------------------------------------------
-// Visual Graph Canvas Component
-// ---------------------------------------------------------------------------
-
-function GraphCanvas({ agents, edges, onAddEdge, onRemoveEdge }: {
-  agents: string[];
-  edges: EdgeDef[];
-  onAddEdge: (from: string, to: string) => void;
-  onRemoveEdge: (i: number) => void;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [dragFrom, setDragFrom] = useState<string | null>(null);
-
-  const nodePositions = useCallback(() => {
-    const positions: Record<string, { x: number; y: number }> = {};
-    const count = agents.length;
-    const w = 600, h = 320;
-    const cx = w / 2, cy = h / 2;
-    const radius = Math.min(w, h) * 0.35;
-    agents.forEach((a, i) => {
-      const angle = (2 * Math.PI * i) / count - Math.PI / 2;
-      positions[a] = { x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) };
-    });
-    return positions;
-  }, [agents]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = 600 * dpr;
-    canvas.height = 320 * dpr;
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, 600, 320);
-
-    const pos = nodePositions();
-
-    // Draw edges
-    edges.forEach((e, i) => {
-      const from = pos[e.from];
-      const to = pos[e.to];
-      if (!from || !to) return;
-      ctx.beginPath();
-      ctx.moveTo(from.x, from.y);
-      ctx.lineTo(to.x, to.y);
-      ctx.strokeStyle = '#3b82f6';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      // Arrowhead
-      const angle = Math.atan2(to.y - from.y, to.x - from.x);
-      const headLen = 12;
-      const endX = to.x - 22 * Math.cos(angle);
-      const endY = to.y - 22 * Math.sin(angle);
-      ctx.beginPath();
-      ctx.moveTo(endX, endY);
-      ctx.lineTo(endX - headLen * Math.cos(angle - 0.4), endY - headLen * Math.sin(angle - 0.4));
-      ctx.lineTo(endX - headLen * Math.cos(angle + 0.4), endY - headLen * Math.sin(angle + 0.4));
-      ctx.closePath();
-      ctx.fillStyle = '#3b82f6';
-      ctx.fill();
-
-      // Condition label
-      if (e.condition) {
-        const mx = (from.x + to.x) / 2;
-        const my = (from.y + to.y) / 2;
-        ctx.font = '10px monospace';
-        ctx.fillStyle = '#6b7280';
-        ctx.textAlign = 'center';
-        ctx.fillText(e.condition.slice(0, 20), mx, my - 8);
-      }
-    });
-
-    // Draw nodes
-    Object.entries(pos).forEach(([name, p]) => {
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 20, 0, 2 * Math.PI);
-      ctx.fillStyle = dragFrom === name ? '#2563eb' : '#dbeafe';
-      ctx.fill();
-      ctx.strokeStyle = '#3b82f6';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      ctx.font = '12px sans-serif';
-      ctx.fillStyle = '#1e3a5f';
-      ctx.textAlign = 'center';
-      ctx.fillText(name.length > 12 ? name.slice(0, 10) + '..' : name, p.x, p.y + 35);
-    });
-  }, [agents, edges, dragFrom, nodePositions]);
-
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const pos = nodePositions();
-
-    const clicked = Object.entries(pos).find(([_, p]) => Math.hypot(p.x - x, p.y - y) < 25);
-    if (!clicked) { setDragFrom(null); return; }
-
-    if (dragFrom && dragFrom !== clicked[0]) {
-      onAddEdge(dragFrom, clicked[0]);
-      setDragFrom(null);
-    } else {
-      setDragFrom(clicked[0]);
-    }
-  };
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-2">
-        <p className="text-xs text-gray-500">
-          {dragFrom ? `Click a target node to connect from "${dragFrom}"` : 'Click a node to start an edge, then click the target'}
-        </p>
-        {dragFrom && (
-          <button onClick={() => setDragFrom(null)} className="text-xs text-red-500 hover:text-red-700">Cancel</button>
-        )}
-      </div>
-      <canvas
-        ref={canvasRef}
-        width={600}
-        height={320}
-        className="border border-gray-200 rounded-lg cursor-crosshair bg-white"
-        style={{ width: '100%', height: 320 }}
-        onClick={handleCanvasClick}
-      />
-      {edges.length > 0 && (
-        <div className="mt-2 space-y-1">
-          {edges.map((e, i) => (
-            <div key={i} className="flex items-center gap-2 text-xs bg-gray-50 px-2 py-1 rounded">
-              <span className="font-medium text-blue-600">{e.from}</span>
-              <span className="text-gray-400">→</span>
-              <span className="font-medium text-blue-600">{e.to}</span>
-              {e.condition && <span className="text-gray-400 font-mono">if: {e.condition}</span>}
-              <button onClick={() => onRemoveEdge(i)} className="ml-auto text-red-400 hover:text-red-600">✕</button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-
-// ---------------------------------------------------------------------------
-// Main Builder Page
-// ---------------------------------------------------------------------------
+/* ── Main Component ──────────────────────────────────────────────────── */
 
 export function WorkflowBuilderPage() {
-  const navigate = useNavigate();
+  const nav = useNavigate();
   const qc = useQueryClient();
-  const [name, setName] = useState('my-workflow');
-  const [namespace, setNamespace] = useState('default');
-  const [topology, setTopology] = useState('sequential');
-  const [agents, setAgents] = useState<string[]>(['']);
-  const [edges, setEdges] = useState<EdgeDef[]>([]);
-  const [hitlGate, setHitlGate] = useState('');
-  const [hitlTimeout, setHitlTimeout] = useState(3600);
-  const [inputData, setInputData] = useState('{}');
-  const [showYaml, setShowYaml] = useState(false);
-  const [isRunning, setIsRunning] = useState(false);
-  const [error, setError] = useState('');
+  const stream = useWorkflowStream();
+
+  const [step, setStep] = useState<Step>('Describe');
+  const [description, setDescription] = useState('');
+  const [generated, setGenerated] = useState<GeneratedWorkflow | null>(null);
+
+  // Canvas state — persists across steps
+  const [canvasNodes, setCanvasNodes] = useState<Node[]>([]);
+  const [canvasEdges, setCanvasEdges] = useState<Edge[]>([]);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
+  const [inputJson, setInputJson] = useState('{}');
+  const [workflowName, setWorkflowName] = useState('');
   const [saveDesc, setSaveDesc] = useState('');
-  const [showSaved, setShowSaved] = useState(false);
-  const [showVersions, setShowVersions] = useState(false);
+  const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
 
-  const { data: availableAgents } = useQuery({
+  const { data: availableAgents = [] } = useQuery({
     queryKey: queryKeys.agents.all,
-    queryFn: () => apiFetch<AgentSummary[]>(`${API.workflow}/agents`),
+    queryFn: () => apiFetch<{ name: string; framework: string }[]>(`${API.workflow}/agents`),
   });
 
-  const { data: savedWorkflows, refetch: refetchSaved } = useQuery({
-    queryKey: ['versions', 'workflows'],
-    queryFn: () => apiFetch<SavedWorkflow[]>(`${API.workflow}/versions/workflows`),
-  });
-
-  const validAgents = agents.filter((a) => a.trim());
-  const yaml = generateYaml(name, namespace, topology, validAgents, edges, hitlGate, hitlTimeout);
-
-  const addAgent = () => setAgents([...agents, '']);
-  const removeAgent = (i: number) => { const n = agents.filter((_, idx) => idx !== i); setAgents(n.length ? n : ['']); };
-  const updateAgent = (i: number, val: string) => { const n = [...agents]; n[i] = val; setAgents(n); };
-
-  const addEdge = (from: string, to: string) => {
-    if (!edges.some((e) => e.from === from && e.to === to)) {
-      setEdges([...edges, { from, to, condition: '' }]);
-    }
-  };
-  const removeEdge = (i: number) => setEdges(edges.filter((_, idx) => idx !== i));
-  const updateEdgeCondition = (i: number, condition: string) => {
-    const n = [...edges]; n[i] = { ...n[i], condition }; setEdges(n);
-  };
-
-  const applyTemplate = (t: typeof TEMPLATES[number]) => {
-    setTopology(t.topology);
-    setAgents(t.agents);
-    setName(t.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''));
-    setInputData(JSON.stringify(t.input, null, 2));
-    if ('edges' in t && t.edges) setEdges(t.edges); else setEdges([]);
-    setHitlGate('');
-  };
-
-  const saveMut = useMutation({
-    mutationFn: () => {
-      let parsedInput = {};
-      try { parsedInput = JSON.parse(inputData); } catch { /* */ }
-      return apiFetch(`${API.workflow}/versions/workflows`, {
+  const generateMut = useMutation({
+    mutationFn: async () => {
+      const agentNames = availableAgents.map((a: { name: string }) => a.name);
+      return apiFetch<GeneratedWorkflow>(`${API.workflow}/workflows/generate`, {
         method: 'POST',
-        body: JSON.stringify({ name, yaml_content: yaml, input_data: parsedInput, description: saveDesc }),
+        body: JSON.stringify({
+          description,
+          available_agents: agentNames,
+          available_tools: ['web-search/search', 'knowledge-base/search_docs', 'document-intelligence/parse_document'],
+        }),
       });
     },
-    onSuccess: () => { refetchSaved(); setSaveDesc(''); },
+    onSuccess: (data) => {
+      setGenerated(data);
+      setWorkflowName(data.workflow_name || 'my-workflow');
+      setInputJson(JSON.stringify(data.suggested_input || {}, null, 2));
+      // Convert to React Flow nodes/edges
+      const { nodes, edges } = generatedToFlow(data.agents, data.edges);
+      setCanvasNodes(nodes);
+      setCanvasEdges(edges);
+      setStep('Design');
+    },
   });
 
-  const loadVersion = async (wfName: string, version: number) => {
-    const v = await apiFetch<WorkflowVersionDetail>(`${API.workflow}/versions/workflows/${wfName}/${version}`);
-    // Parse YAML to extract topology, agents, etc.
-    setName(v.workflow_name);
-    setInputData(JSON.stringify(v.input_data, null, 2));
-    // Try to parse the yaml_content for topology/agents
-    try {
-      const lines = v.yaml_content.split('\n');
-      const topoLine = lines.find((l) => l.trim().startsWith('topology:'));
-      if (topoLine) setTopology(topoLine.split(':')[1].trim());
-      const agentRefs = lines.filter((l) => l.trim().startsWith('- ref:')).map((l) => l.split('ref:')[1].trim());
-      if (agentRefs.length > 0) setAgents(agentRefs);
-    } catch { /* fallback */ }
-    setShowVersions(false);
-  };
+  const currentYaml = useMemo(
+    () => flowToYaml(canvasNodes, canvasEdges, workflowName || 'workflow'),
+    [canvasNodes, canvasEdges, workflowName],
+  );
 
-  const handleRun = async (stream: boolean) => {
-    setError('');
-    setIsRunning(true);
-    try {
-      let parsedInput = {};
-      try { parsedInput = JSON.parse(inputData); } catch { /* */ }
-      if (stream) {
-        navigate('/app/workflows/run', { state: { yaml, inputData: parsedInput } });
-        return;
-      }
-      await apiFetch(`${API.workflow}/workflows/run`, {
+  const saveMut = useMutation({
+    mutationFn: async () => {
+      return apiFetch(`${API.workflow}/versions/workflows`, {
         method: 'POST',
-        body: JSON.stringify({ workflow_yaml: yaml, input_data: parsedInput }),
+        body: JSON.stringify({
+          name: workflowName,
+          yaml_content: currentYaml,
+          description: saveDesc || description,
+        }),
       });
-      navigate('/app/workflows');
-    } catch (e: any) {
-      setError(e.message || 'Failed to run workflow');
-    } finally {
-      setIsRunning(false);
-    }
-  };
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.workflows.runs });
+      nav('/app/workflows');
+    },
+  });
+
+  const stepIndex = STEPS.indexOf(step);
+
+  // Agent names from canvas for test step
+  const agentNames = useMemo(
+    () => canvasNodes.filter(n => n.type === 'agent').map(n => (n.data as AgentNodeData).label),
+    [canvasNodes],
+  );
+
+  const agentOutputs = useMemo(
+    () => buildAgentOutputs(stream.events, agentNames),
+    [stream.events, agentNames],
+  );
+
+  const finalOutput = useMemo(() => extractFinalOutput(stream.result), [stream.result]);
+
+  // Build execution-state nodes (with status) for test step
+  const executionNodes = useMemo(() => {
+    return canvasNodes.map(n => {
+      if (n.type !== 'agent') return n;
+      const d = n.data as AgentNodeData;
+      const output = agentOutputs.find(a => a.name === d.label);
+      return { ...n, data: { ...d, status: output?.status || 'idle' } };
+    });
+  }, [canvasNodes, agentOutputs]);
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Workflow Builder</h1>
-          <p className="text-sm text-gray-500 mt-1">Design, configure, and execute multi-agent workflows</p>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => setShowSaved(!showSaved)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
-            📂 Saved ({savedWorkflows?.length ?? 0})
-          </button>
-          <button onClick={() => navigate('/app/workflows')} className="px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
-            ← Runs
-          </button>
-        </div>
-      </div>
-
-      {/* Saved workflows drawer */}
-      {showSaved && savedWorkflows && savedWorkflows.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm mb-6">
-          <h3 className="text-sm font-semibold text-gray-900 mb-3">Saved Workflows</h3>
-          <div className="grid grid-cols-3 gap-3">
-            {savedWorkflows.map((w) => (
-              <button
-                key={w.name}
-                onClick={() => { setShowVersions(true); setShowSaved(false); loadVersion(w.name, w.latest_version); }}
-                className="text-left p-3 border border-gray-200 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-colors"
-              >
-                <div className="font-medium text-sm text-gray-900">{w.name}</div>
-                <div className="text-xs text-gray-500 mt-1">{w.description || 'No description'}</div>
-                <div className="mt-2 flex items-center gap-2">
-                  <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">v{w.latest_version}</span>
-                  <span className="text-xs text-gray-400">{w.version_count} versions</span>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Templates */}
-      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm mb-6">
-        <h3 className="text-sm font-semibold text-gray-900 mb-3">Quick Start Templates</h3>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {TEMPLATES.map((t) => (
-            <button key={t.name} onClick={() => applyTemplate(t)} className="text-left p-3 border border-gray-200 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-colors">
-              <div className="font-medium text-sm text-gray-900">{t.name}</div>
-              <div className="text-xs text-gray-500 mt-1">{t.desc}</div>
-              <div className="mt-2">
-                <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">{t.topology}</span>
-                <span className="ml-1 text-xs text-gray-400">{t.agents.length} agents</span>
-              </div>
+    <div className="space-y-4" style={{ maxWidth: '100%' }}>
+      {/* Step indicator */}
+      <div className="flex items-center justify-between bg-white border border-gray-200 rounded-xl px-6 py-3">
+        {STEPS.map((s, i) => (
+          <div key={s} className="flex items-center">
+            <button onClick={() => { if (i <= stepIndex) setStep(s); }} disabled={i > stepIndex}
+              className={`flex items-center gap-2 ${i <= stepIndex ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}>
+              <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                i < stepIndex ? 'bg-green-100 text-green-700' : i === stepIndex ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400'
+              }`}>{i < stepIndex ? '✓' : i + 1}</div>
+              <span className={`text-sm font-medium ${i === stepIndex ? 'text-blue-700' : 'text-gray-500'}`}>{s}</span>
             </button>
-          ))}
-        </div>
+            {i < STEPS.length - 1 && <div className={`w-12 h-0.5 mx-2 ${i < stepIndex ? 'bg-green-400' : 'bg-gray-200'}`} />}
+          </div>
+        ))}
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2 space-y-5">
-          {/* Config */}
-          <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-            <h3 className="text-sm font-semibold text-gray-900 mb-3">Workflow Configuration</h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Workflow Name</label>
-                <input value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Namespace</label>
-                <input value={namespace} onChange={(e) => setNamespace(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-              </div>
+      {/* ──── Step 1: Describe ──── */}
+      {step === 'Describe' && (
+        <div className="space-y-6">
+          <div className="bg-white border border-gray-200 rounded-xl p-8">
+            <h2 className="text-xl font-bold text-gray-900 mb-2">What should this workflow do?</h2>
+            <p className="text-sm text-gray-500 mb-6">Describe in plain language. AI will design an initial flow that you can freely edit on the canvas.</p>
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)}
+              placeholder="e.g., Research AI trends using web search, then analyze sentiment and extract entities in parallel, finally merge into a summary..."
+              className="w-full h-32 border border-gray-300 rounded-xl px-4 py-3 text-sm resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+            <div className="flex justify-end mt-4">
+              <button onClick={() => generateMut.mutate()} disabled={!description.trim() || generateMut.isPending}
+                className="px-6 py-3 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2">
+                {generateMut.isPending
+                  ? <><div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" /> AI is designing...</>
+                  : <>Generate Workflow →</>}
+              </button>
             </div>
+            {generateMut.isError && <p className="text-sm text-red-600 mt-3">Error: {(generateMut.error as Error).message}</p>}
           </div>
-
-          {/* Topology */}
-          <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-            <h3 className="text-sm font-semibold text-gray-900 mb-3">Topology</h3>
+          <div>
+            <h3 className="text-sm font-medium text-gray-500 mb-3">Or start from an example:</h3>
             <div className="grid grid-cols-2 gap-3">
-              {TOPOLOGIES.map((t) => (
-                <button key={t.value} onClick={() => { setTopology(t.value); if (t.value !== 'graph') setEdges([]); }}
-                  className={`text-left p-3 border-2 rounded-lg transition-all ${topology === t.value ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}>
-                  <div className="flex items-center gap-2"><span className="text-lg">{t.icon}</span><span className="font-medium text-sm text-gray-900">{t.label}</span></div>
-                  <p className="text-xs text-gray-500 mt-1">{t.desc}</p>
+              {EXAMPLE_PROMPTS.map((ex) => (
+                <button key={ex.label} onClick={() => setDescription(ex.text)}
+                  className="text-left p-4 bg-white border border-gray-200 rounded-xl hover:border-blue-400 hover:bg-blue-50 transition">
+                  <div className="text-sm font-semibold text-gray-900">{ex.label}</div>
+                  <div className="text-xs text-gray-500 mt-1 line-clamp-2">{ex.text}</div>
                 </button>
               ))}
             </div>
           </div>
+        </div>
+      )}
 
-          {/* Agents */}
-          <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-gray-900">
-                Agents {topology === 'hierarchical' && <span className="text-xs text-gray-400 font-normal ml-2">(first = supervisor)</span>}
-              </h3>
-              <button onClick={addAgent} className="text-xs text-blue-600 hover:text-blue-700 font-medium">+ Add Agent</button>
-            </div>
-            <div className="space-y-2">
-              {agents.map((agent, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <span className="text-xs text-gray-400 w-6 text-right">{i + 1}.</span>
-                  {topology === 'hierarchical' && i === 0 && <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-xs font-medium">Sup</span>}
-                  {availableAgents && availableAgents.length > 0 ? (
-                    <select value={agent} onChange={(e) => updateAgent(i, e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500">
-                      <option value="">Select agent...</option>
-                      {availableAgents.map((a) => <option key={a.name} value={a.name}>{a.name} ({a.framework})</option>)}
-                    </select>
-                  ) : (
-                    <input value={agent} onChange={(e) => updateAgent(i, e.target.value)} placeholder="agent-name" className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-                  )}
-                  {agents.length > 1 && <button onClick={() => removeAgent(i)} className="text-red-400 hover:text-red-600 text-sm">✕</button>}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Visual Graph Editor */}
-          {topology === 'graph' && validAgents.length >= 2 && (
-            <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-              <h3 className="text-sm font-semibold text-gray-900 mb-3">Graph Editor</h3>
-              <GraphCanvas
-                agents={validAgents}
-                edges={edges}
-                onAddEdge={addEdge}
-                onRemoveEdge={removeEdge}
-              />
-              {/* Edge condition editor */}
-              {edges.length > 0 && (
-                <div className="mt-3">
-                  <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Edge Conditions</h4>
-                  {edges.map((e, i) => (
-                    <div key={i} className="flex items-center gap-2 mb-1">
-                      <span className="text-xs text-blue-600 font-medium">{e.from} → {e.to}</span>
-                      <input
-                        value={e.condition}
-                        onChange={(ev) => updateEdgeCondition(i, ev.target.value)}
-                        placeholder="condition (optional)"
-                        className="flex-1 px-2 py-1 border border-gray-200 rounded text-xs font-mono outline-none focus:ring-1 focus:ring-blue-500"
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
+      {/* ──── Step 2: Design (Canvas Editor) ──── */}
+      {step === 'Design' && (
+        <div className="space-y-3">
+          {generated?.explanation && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 flex items-start gap-3">
+              <span className="text-lg">🤖</span>
+              <p className="text-sm text-blue-800">{generated.explanation} <span className="text-blue-600 font-medium">You can now freely edit — add nodes, draw edges, rearrange the flow.</span></p>
             </div>
           )}
 
-          {/* HITL */}
-          <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-            <h3 className="text-sm font-semibold text-gray-900 mb-2">Human-in-the-Loop</h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Approval Gate</label>
-                <select value={hitlGate} onChange={(e) => setHitlGate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="">None</option>
-                  {validAgents.map((a) => <option key={a} value={a}>{a}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Timeout (s)</label>
-                <input type="number" value={hitlTimeout} onChange={(e) => setHitlTimeout(Number(e.target.value))} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-              </div>
-            </div>
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden" style={{ height: '500px' }}>
+            <WorkflowCanvas
+              initialNodes={canvasNodes}
+              initialEdges={canvasEdges}
+              onNodesChange={setCanvasNodes}
+              onEdgesChange={setCanvasEdges}
+              selectedNodeId={selectedNodeId}
+              onNodeSelect={setSelectedNodeId}
+              availableAgents={availableAgents}
+            />
           </div>
 
-          {/* Input Data */}
-          <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-            <h3 className="text-sm font-semibold text-gray-900 mb-2">Input Data (JSON)</h3>
-            <textarea value={inputData} onChange={(e) => setInputData(e.target.value)} rows={3} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono outline-none focus:ring-2 focus:ring-blue-500" />
-          </div>
-        </div>
-
-        {/* Right sidebar */}
-        <div className="space-y-5">
-          <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm sticky top-5">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-gray-900">Generated YAML</h3>
-              <button onClick={() => setShowYaml(!showYaml)} className="text-xs text-blue-600">{showYaml ? 'Hide' : 'Show'}</button>
-            </div>
-            {showYaml && (
-              <pre className="bg-gray-900 text-green-400 p-3 rounded-lg text-xs font-mono overflow-auto max-h-60 mb-4 whitespace-pre-wrap">{yaml}</pre>
-            )}
-            <div className="space-y-2 mb-4">
-              <div className="flex justify-between text-sm"><span className="text-gray-500">Topology</span><span className="font-medium">{topology}</span></div>
-              <div className="flex justify-between text-sm"><span className="text-gray-500">Agents</span><span className="font-medium">{validAgents.length}</span></div>
-              {topology === 'graph' && <div className="flex justify-between text-sm"><span className="text-gray-500">Edges</span><span className="font-medium">{edges.length}</span></div>}
-              {hitlGate && <div className="flex justify-between text-sm"><span className="text-gray-500">HITL Gate</span><span className="font-medium text-amber-600">{hitlGate}</span></div>}
-            </div>
-
-            {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
-
-            <div className="space-y-2 mb-4">
-              <button onClick={() => handleRun(true)} disabled={isRunning || validAgents.length === 0} className="w-full px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-                ▶ Run with Live Stream
-              </button>
-              <button onClick={() => handleRun(false)} disabled={isRunning || validAgents.length === 0} className="w-full px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50">
-                {isRunning ? 'Running...' : 'Run (Blocking)'}
+          <div className="flex items-center justify-between">
+            <button onClick={() => setStep('Describe')} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800">← Back</button>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-400">{canvasNodes.filter(n => n.type === 'agent').length} agents · {canvasEdges.length} edges</span>
+              <button onClick={() => setStep('Test')}
+                disabled={canvasNodes.filter(n => n.type === 'agent').length < 2 || canvasEdges.length < 1}
+                className="px-6 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
+                Test Workflow →
               </button>
             </div>
-
-            {/* Save version */}
-            <div className="border-t border-gray-200 pt-4">
-              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Save Version</h4>
-              <input value={saveDesc} onChange={(e) => setSaveDesc(e.target.value)} placeholder="Version description..." className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-xs outline-none focus:ring-1 focus:ring-blue-500 mb-2" />
-              <button
-                onClick={() => saveMut.mutate()}
-                disabled={saveMut.isPending || validAgents.length === 0}
-                className="w-full px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-xs font-medium hover:bg-gray-200 disabled:opacity-50"
-              >
-                {saveMut.isPending ? 'Saving...' : '💾 Save Workflow Version'}
-              </button>
-              {saveMut.isSuccess && <p className="text-xs text-green-600 mt-1">Saved!</p>}
-            </div>
-
-            {validAgents.length === 0 && <p className="text-xs text-amber-600 mt-2">Add at least one agent</p>}
           </div>
         </div>
-      </div>
+      )}
+
+      {/* ──── Step 3: Test ──── */}
+      {step === 'Test' && (
+        <div className="space-y-3">
+          {/* Execution canvas (read-only) */}
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden" style={{ height: '280px' }}>
+            <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 bg-gray-50">
+              <span className="text-xs font-semibold text-gray-600">Execution Flow</span>
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                stream.status === 'completed' ? 'bg-green-100 text-green-700' :
+                stream.status === 'running' ? 'bg-blue-100 text-blue-700 animate-pulse' :
+                stream.status === 'failed' ? 'bg-red-100 text-red-700' :
+                'bg-gray-100 text-gray-500'
+              }`}>{stream.status === 'idle' ? 'Ready' : stream.status} {stream.status !== 'idle' && `· ${stream.elapsed}s`}</span>
+            </div>
+            <div style={{ height: 'calc(100% - 36px)' }}>
+              <WorkflowCanvas
+                initialNodes={executionNodes}
+                initialEdges={canvasEdges}
+                readOnly
+              />
+            </div>
+          </div>
+
+          {/* Input + Agent outputs */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-3">
+              <div className="bg-white border border-gray-200 rounded-xl p-3">
+                <h3 className="text-xs font-semibold text-gray-700 mb-2">Test Input</h3>
+                <textarea value={inputJson} onChange={(e) => setInputJson(e.target.value)}
+                  className="w-full h-20 font-mono text-[10px] border border-gray-200 rounded-lg p-2 resize-none" />
+                <div className="mt-2">
+                  {stream.status === 'idle' || stream.status === 'completed' || stream.status === 'failed' || stream.status === 'cancelled' ? (
+                    <button onClick={() => {
+                      let input = {};
+                      try { input = JSON.parse(inputJson); } catch { /* */ }
+                      stream.reset();
+                      stream.start(currentYaml, input);
+                    }} className="w-full px-3 py-2 bg-green-600 text-white rounded-lg text-xs font-semibold hover:bg-green-700">
+                      ▶ Run Test
+                    </button>
+                  ) : (
+                    <button onClick={() => stream.cancel()} className="w-full px-3 py-2 bg-red-600 text-white rounded-lg text-xs font-semibold hover:bg-red-700">■ Stop</button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="col-span-2 space-y-2 max-h-[400px] overflow-y-auto">
+              {stream.status === 'idle' && (
+                <div className="bg-white border border-gray-200 rounded-xl p-6 text-center text-gray-400">
+                  <p className="text-sm">Click "Run Test" to execute</p>
+                </div>
+              )}
+
+              {agentOutputs.map((agent) => (
+                <div key={agent.name} className={`bg-white border rounded-xl overflow-hidden ${
+                  agent.status === 'running' ? 'border-blue-400' : agent.status === 'done' ? 'border-green-300' : 'border-gray-200'
+                }`}>
+                  <button onClick={() => setExpandedAgent(expandedAgent === agent.name ? null : agent.name)}
+                    className="w-full flex items-center justify-between px-3 py-2 hover:bg-gray-50">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${
+                        agent.status === 'running' ? 'bg-blue-500 animate-pulse' : agent.status === 'done' ? 'bg-green-500' : 'bg-gray-300'
+                      }`} />
+                      <span className="text-xs font-semibold text-gray-900">{agent.name}</span>
+                      {agent.status === 'running' && <div className="animate-spin rounded-full h-3 w-3 border border-blue-500 border-t-transparent" />}
+                    </div>
+                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${
+                      agent.status === 'done' ? 'bg-green-100 text-green-700' : agent.status === 'running' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
+                    }`}>{agent.status}</span>
+                  </button>
+                  {(expandedAgent === agent.name || agent.status === 'running') && (agent.thinking || agent.text || agent.tools.length > 0) && (
+                    <div className="px-3 pb-3 space-y-2 border-t border-gray-100">
+                      {agent.thinking && <div className="mt-2 p-2 bg-purple-50 rounded-lg"><p className="text-[10px] text-purple-900">{agent.thinking}</p></div>}
+                      {agent.tools.map((t, i) => (
+                        <div key={i} className="p-2 bg-amber-50 rounded-lg">
+                          <div className="text-[9px] font-bold text-amber-700 uppercase mb-0.5">Tool: {t.name}</div>
+                          {t.output && <p className="text-[10px] text-amber-900 line-clamp-2">{t.output}</p>}
+                        </div>
+                      ))}
+                      {agent.text && (
+                        <div className="p-2 bg-blue-50 rounded-lg">
+                          <div className="text-[10px] text-gray-800 whitespace-pre-wrap max-h-32 overflow-y-auto leading-relaxed">
+                            {agent.text.length > 800 ? agent.text.slice(0, 800) + '\n...' : agent.text}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {stream.status === 'completed' && finalOutput && (
+                <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                  <h4 className="text-xs font-bold text-green-800 mb-2">✅ Final Output</h4>
+                  <div className="text-xs text-gray-800 whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto bg-white rounded-lg p-3 border border-green-100">
+                    {finalOutput}
+                  </div>
+                </div>
+              )}
+
+              {stream.error && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+                  <p className="text-xs text-red-700">{stream.error}</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex justify-between">
+            <button onClick={() => { stream.reset(); setStep('Design'); }} className="px-4 py-2 text-sm text-gray-600">← Back to Design</button>
+            <button onClick={() => setStep('Save')} className="px-6 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700">Save Workflow →</button>
+          </div>
+        </div>
+      )}
+
+      {/* ──── Step 4: Save ──── */}
+      {step === 'Save' && (
+        <div className="max-w-lg mx-auto">
+          <div className="bg-white border border-gray-200 rounded-xl p-8 space-y-4">
+            <h2 className="text-xl font-bold text-gray-900">Save Workflow</h2>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Workflow Name</label>
+              <input value={workflowName} onChange={(e) => setWorkflowName(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
+              <textarea value={saveDesc || description} onChange={(e) => setSaveDesc(e.target.value)}
+                className="w-full h-16 border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none" />
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3 text-sm">
+              <div className="grid grid-cols-2 gap-1">
+                <span className="text-gray-500">Agents:</span><span className="font-medium">{canvasNodes.filter(n => n.type === 'agent').length}</span>
+                <span className="text-gray-500">Edges:</span><span className="font-medium">{canvasEdges.length}</span>
+              </div>
+            </div>
+            <div className="flex justify-between pt-2">
+              <button onClick={() => setStep('Test')} className="px-4 py-2 text-sm text-gray-600">← Back</button>
+              <button onClick={() => saveMut.mutate()} disabled={!workflowName.trim() || saveMut.isPending}
+                className="px-6 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700 disabled:opacity-50">
+                {saveMut.isPending ? 'Saving...' : '✓ Save & Deploy'}
+              </button>
+            </div>
+            {saveMut.isError && <p className="text-sm text-red-600">Error: {(saveMut.error as Error)?.message || 'Save failed'}</p>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -8,10 +8,14 @@ events to the appropriate memory type. It is an observability interceptor
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .memory_manager import DefaultMemoryManager
 from .protocols import AgentEvent, AgentEventType, MemoryType
+
+# Callback signature: (memory_type, size_bytes, token_estimate) -> None
+MemoryEventCallback = Callable[[str, int, int], Awaitable[None]]
 
 
 # Default mapping from event types to memory types
@@ -43,9 +47,11 @@ class MemoryInterceptor:
         self,
         manager: DefaultMemoryManager,
         event_mapping: dict[AgentEventType, MemoryType] | None = None,
+        event_callback: MemoryEventCallback | None = None,
     ) -> None:
         self._manager = manager
         self._event_mapping = event_mapping or dict(_DEFAULT_EVENT_MAPPING)
+        self._event_callback = event_callback
 
     async def intercept(self, event: AgentEvent) -> AgentEvent | None:
         """Persist event data to memory and pass the event through."""
@@ -71,6 +77,13 @@ class MemoryInterceptor:
             role=role,
             metadata=metadata,
         )
+
+        if self._event_callback is not None:
+            size_bytes = len(content.encode("utf-8"))
+            token_estimate = len(content) // 4
+            await self._event_callback(
+                memory_type.value, size_bytes, token_estimate
+            )
 
         return event
 

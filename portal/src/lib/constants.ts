@@ -19,5 +19,17 @@ export const queryKeys = {
   tools: { all: ['tools'] as const, search: (q: string) => ['tools', 'search', q] as const },
   usage: { tenant: (id: string) => ['usage', id] as const, summary: ['usage', 'summary'] as const },
   budgets: { all: ['budgets'] as const, ns: (ns: string) => ['budgets', ns] as const },
+  knowledge: {
+    collections: (tenantId: string) => ['knowledge', 'collections', tenantId] as const,
+    documents: (tenantId: string, collection?: string) => ['knowledge', 'documents', tenantId, collection ?? ''] as const,
+  },
   health: ['health'] as const,
+  memory: {
+    platform: ['memory', 'platform'] as const,
+    health: ['memory', 'health'] as const,
+    agent: (name: string) => ['memory', 'agent', name] as const,
+    agentEntries: (name: string, type: string) => ['memory', 'entries', name, type] as const,
+    tenantUsage: (id: string) => ['memory', 'usage', id] as const,
+    platformSummary: ['memory', 'platform-summary'] as const,
+  },
 };

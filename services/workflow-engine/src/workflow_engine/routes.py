@@ -59,7 +59,233 @@ def _parse_workflow(body: WorkflowRunRequest) -> WorkflowCRD:
             status_code=400,
             detail=f"Expected kind 'Workflow', got '{raw.get('kind', 'unknown')}'"
         )
+    _validate_workflow(workflow)
     return workflow
+
+
+def _validate_workflow(workflow: WorkflowCRD) -> None:
+    """Validate workflow structure. Raises HTTPException(400) on invalid config."""
+    agent_count = len(workflow.spec.agents)
+    topology = workflow.spec.topology
+    topo_name = topology.value if hasattr(topology, "value") else str(topology)
+
+    if agent_count == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Workflow must have at least one agent.",
+        )
+
+    if topo_name in ("sequential", "parallel") and agent_count < 2:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{topo_name.capitalize()} topology requires at least 2 agents, got {agent_count}.",
+        )
+
+    if topo_name == "graph" and agent_count >= 2:
+        edge_count = len(workflow.spec.edges) if workflow.spec.edges else 0
+        if edge_count == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Graph topology requires at least one edge between agents.",
+            )
+
+
+@router.post("/generate")
+async def generate_workflow(body: dict[str, Any], request: Request) -> dict[str, Any]:
+    """Generate a workflow from a natural language description using AI.
+
+    Calls the model-gateway to have Claude design an appropriate workflow
+    based on the user's description, available agents, and available tools.
+    """
+    import os
+
+    import httpx
+
+    description = body.get("description", "").strip()
+    if not description:
+        raise HTTPException(status_code=400, detail="Missing 'description' field")
+
+    available_agents = body.get("available_agents", [])
+    available_tools = body.get("available_tools", [])
+
+    system_prompt = _build_generation_prompt(available_agents, available_tools)
+
+    gateway_url = os.environ.get("WF_MODEL_GATEWAY_URL", "http://localhost:8002")
+    model = os.environ.get("NGEN_DEFAULT_MODEL", "claude-sonnet-4-6")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{gateway_url}/v1/chat/completions",
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": description},
+                    ],
+                    "max_tokens": 2048,
+                },
+                headers={"x-tenant-id": "default"},
+            )
+
+            if resp.status_code == 200:
+                data = resp.json()
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                if content:
+                    return _parse_generation_response(content, description)
+
+    except Exception as e:
+        logger.warning("AI workflow generation failed, using template fallback: %s", e)
+
+    # Fallback: template matching
+    return _fallback_template(description, available_agents)
+
+
+def _build_generation_prompt(agents: list[str], tools: list[str]) -> str:
+    agent_list = ", ".join(agents) if agents else "no agents created yet"
+    tool_list = ", ".join(tools) if tools else "web-search/search, knowledge-base/search_docs"
+
+    return f"""You are an AI workflow designer for the NGEN multi-agent platform.
+
+Given a user's description, generate a workflow configuration.
+
+Available topologies:
+- sequential: Agents execute one after another. Output flows as input to the next.
+- parallel: All agents run simultaneously with the same input.
+- graph: Directed acyclic graph with conditional edges between agents.
+- hierarchical: First agent is supervisor that delegates to others.
+
+Available agents: {agent_list}
+Available tools: {tool_list}
+
+IMPORTANT: If the user's description implies agents that don't exist yet, suggest creating them with appropriate names and descriptions.
+
+Respond in EXACTLY this JSON format (no markdown fences):
+{{
+  "topology": "sequential|parallel|graph|hierarchical",
+  "agents": [
+    {{"name": "agent-name", "role": "Brief description of what this agent does", "tools": ["tool/name"], "needs_creation": true|false}}
+  ],
+  "edges": [
+    {{"from": "agent-a", "to": "agent-b", "condition": "optional condition"}}
+  ],
+  "explanation": "1-2 sentence explanation of why this topology and these agents were chosen.",
+  "suggested_input": {{"key": "example value"}},
+  "workflow_name": "kebab-case-name"
+}}
+
+Rules:
+- For sequential: agents list order = execution order. No edges needed.
+- For parallel: agents list = all parallel agents. No edges needed.
+- For graph: provide edges array with from/to/condition.
+- For hierarchical: first agent is the supervisor.
+- Agent names should be kebab-case.
+- Keep it simple — prefer sequential unless the task clearly needs parallelism or routing."""
+
+
+def _parse_generation_response(content: str, description: str) -> dict[str, Any]:
+    """Parse the LLM's JSON response into a workflow generation result."""
+    import json as json_mod
+
+    # Try to extract JSON from the response
+    try:
+        # Handle potential markdown code fences
+        if "```" in content:
+            start = content.find("{")
+            end = content.rfind("}") + 1
+            if start >= 0 and end > start:
+                content = content[start:end]
+        data = json_mod.loads(content)
+    except json_mod.JSONDecodeError:
+        # If JSON parsing fails, return a basic template
+        return _fallback_template(description, [])
+
+    topology = data.get("topology", "sequential")
+    agents = data.get("agents", [])
+    edges = data.get("edges", [])
+    explanation = data.get("explanation", "")
+    suggested_input = data.get("suggested_input", {})
+    workflow_name = data.get("workflow_name", "generated-workflow")
+
+    # Build YAML
+    yaml_lines = [
+        "apiVersion: ngen.io/v1",
+        "kind: Workflow",
+        "metadata:",
+        f"  name: {workflow_name}",
+        "spec:",
+        f"  topology: {topology}",
+        "  agents:",
+    ]
+    for agent in agents:
+        yaml_lines.append(f"  - ref: {agent['name']}")
+
+    if edges and topology == "graph":
+        yaml_lines.append("  edges:")
+        for edge in edges:
+            yaml_lines.append(f"  - from: {edge['from']}")
+            yaml_lines.append(f"    to: {edge['to']}")
+            if edge.get("condition"):
+                yaml_lines.append(f"    condition: \"{edge['condition']}\"")
+
+    workflow_yaml = "\n".join(yaml_lines)
+
+    return {
+        "workflow_yaml": workflow_yaml,
+        "topology": topology,
+        "agents": agents,
+        "edges": edges,
+        "explanation": explanation,
+        "suggested_input": suggested_input,
+        "workflow_name": workflow_name,
+    }
+
+
+def _fallback_template(description: str, available_agents: list[str]) -> dict[str, Any]:
+    """Simple keyword-based template matching when LLM is unavailable."""
+    desc_lower = description.lower()
+
+    if any(w in desc_lower for w in ["research", "summarize", "analyze"]):
+        return {
+            "topology": "sequential",
+            "agents": [
+                {"name": "researcher", "role": "Research and gather information", "tools": ["web-search/search"], "needs_creation": True},
+                {"name": "analyst", "role": "Analyze research findings", "tools": ["knowledge-base/search_docs"], "needs_creation": True},
+                {"name": "writer", "role": "Write the final summary", "tools": [], "needs_creation": True},
+            ],
+            "edges": [],
+            "explanation": "A sequential pipeline: research → analyze → summarize. Each agent focuses on one step.",
+            "suggested_input": {"topic": "your topic here"},
+            "workflow_name": "research-and-summarize",
+            "workflow_yaml": "apiVersion: ngen.io/v1\nkind: Workflow\nmetadata:\n  name: research-and-summarize\nspec:\n  topology: sequential\n  agents:\n  - ref: researcher\n  - ref: analyst\n  - ref: writer",
+        }
+    elif any(w in desc_lower for w in ["triage", "route", "classify", "support"]):
+        return {
+            "topology": "hierarchical",
+            "agents": [
+                {"name": "triage-agent", "role": "Classify and route requests", "tools": [], "needs_creation": True},
+                {"name": "specialist-a", "role": "Handle category A requests", "tools": [], "needs_creation": True},
+                {"name": "specialist-b", "role": "Handle category B requests", "tools": [], "needs_creation": True},
+            ],
+            "edges": [],
+            "explanation": "A hierarchical workflow: triage agent classifies requests and delegates to specialists.",
+            "suggested_input": {"request": "your request here"},
+            "workflow_name": "triage-and-route",
+            "workflow_yaml": "apiVersion: ngen.io/v1\nkind: Workflow\nmetadata:\n  name: triage-and-route\nspec:\n  topology: hierarchical\n  agents:\n  - ref: triage-agent\n  - ref: specialist-a\n  - ref: specialist-b",
+        }
+    else:
+        return {
+            "topology": "sequential",
+            "agents": [
+                {"name": "processor", "role": "Process the input", "tools": ["web-search/search"], "needs_creation": True},
+                {"name": "reviewer", "role": "Review and finalize", "tools": [], "needs_creation": True},
+            ],
+            "edges": [],
+            "explanation": "A simple two-step pipeline: process then review.",
+            "suggested_input": {"input": "your input here"},
+            "workflow_name": "process-and-review",
+            "workflow_yaml": "apiVersion: ngen.io/v1\nkind: Workflow\nmetadata:\n  name: process-and-review\nspec:\n  topology: sequential\n  agents:\n  - ref: processor\n  - ref: reviewer",
+        }
 
 
 @router.post("/run", response_model=WorkflowRunResponse)

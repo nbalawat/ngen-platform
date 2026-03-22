@@ -100,6 +100,8 @@ class DefaultMemoryManager:
         embedding: list[float] | None = None,
     ) -> str:
         """Write a single entry to the memory store. Returns entry ID."""
+        size_bytes = len(content.encode("utf-8"))
+        token_estimate = len(content) // 4
         entry = MemoryEntry(
             id=str(uuid.uuid4()),
             memory_type=memory_type,
@@ -110,6 +112,8 @@ class DefaultMemoryManager:
             embedding=embedding,
             created_at=time.time(),
             ttl_seconds=self.policy.ttl_seconds,
+            size_bytes=size_bytes,
+            token_estimate=token_estimate,
         )
         return await self.store.write(entry)
 
@@ -294,6 +298,37 @@ class DefaultMemoryManager:
             if await self.store.delete(entry.id, self.scope):
                 count += 1
         return count
+
+    async def get_stats(self) -> dict[str, Any]:
+        """Return memory statistics for this manager's scope.
+
+        Delegates to the store's ``stats()`` method and enriches with
+        scope metadata and policy configuration.
+        """
+        by_type = await self.store.stats(self.scope)
+        total_entries = sum(v["count"] for v in by_type.values())
+        total_bytes = sum(v["size_bytes"] for v in by_type.values())
+        total_tokens = sum(v["token_estimate"] for v in by_type.values())
+        return {
+            "scope": {
+                "org_id": self.scope.org_id,
+                "team_id": self.scope.team_id,
+                "project_id": self.scope.project_id,
+                "agent_name": self.scope.agent_name,
+                "thread_id": self.scope.thread_id,
+            },
+            "total_entries": total_entries,
+            "total_bytes": total_bytes,
+            "total_tokens": total_tokens,
+            "by_type": by_type,
+            "context_budget_tokens": self.context_budget_tokens,
+            "policy": {
+                "max_entries": self.policy.max_entries,
+                "ttl_seconds": self.policy.ttl_seconds,
+                "summarization_threshold": self.policy.summarization_threshold,
+                "retention_days": self.policy.retention_days,
+            },
+        }
 
     async def delete_by_scope(
         self,

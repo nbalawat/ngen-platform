@@ -64,6 +64,8 @@ def _serialize_entry(entry: MemoryEntry) -> str:
         "created_at": entry.created_at,
         "ttl_seconds": entry.ttl_seconds,
         "summary_id": entry.summary_id,
+        "size_bytes": entry.size_bytes,
+        "token_estimate": entry.token_estimate,
     })
 
 
@@ -81,6 +83,8 @@ def _deserialize_entry(data: str) -> MemoryEntry:
         created_at=d.get("created_at", 0.0),
         ttl_seconds=d.get("ttl_seconds"),
         summary_id=d.get("summary_id"),
+        size_bytes=d.get("size_bytes", 0),
+        token_estimate=d.get("token_estimate", 0),
     )
 
 
@@ -217,6 +221,20 @@ class InMemoryMemoryStore:
             and e.memory_type == memory_type
             and not _is_expired(e, now)
         )
+
+    async def stats(self, scope: MemoryScope) -> dict[str, Any]:
+        now = time.time()
+        result: dict[str, dict[str, int]] = {}
+        for e in self._entries.values():
+            if not _matches_scope(e, scope) or _is_expired(e, now):
+                continue
+            key = e.memory_type.value
+            if key not in result:
+                result[key] = {"count": 0, "size_bytes": 0, "token_estimate": 0}
+            result[key]["count"] += 1
+            result[key]["size_bytes"] += e.size_bytes
+            result[key]["token_estimate"] += e.token_estimate
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -380,3 +398,21 @@ class RedisMemoryStore:
         async for _ in self._redis.scan_iter(match=pattern, count=200):
             count += 1
         return count
+
+    async def stats(self, scope: MemoryScope) -> dict[str, Any]:
+        pattern = self._scan_pattern(scope)
+        result: dict[str, dict[str, int]] = {}
+        async for key in self._redis.scan_iter(match=pattern, count=200):
+            raw = await self._redis.get(key)
+            if raw is None:
+                continue
+            entry = _deserialize_entry(
+                raw if isinstance(raw, str) else raw.decode("utf-8")
+            )
+            mt = entry.memory_type.value
+            if mt not in result:
+                result[mt] = {"count": 0, "size_bytes": 0, "token_estimate": 0}
+            result[mt]["count"] += 1
+            result[mt]["size_bytes"] += entry.size_bytes
+            result[mt]["token_estimate"] += entry.token_estimate
+        return result

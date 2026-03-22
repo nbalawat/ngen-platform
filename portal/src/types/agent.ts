@@ -3,6 +3,7 @@ export interface AgentInfo {
   description: string;
   framework: string;
   model: string;
+  system_prompt: string;
   status: string;
   created_at: number;
   invocation_count: number;

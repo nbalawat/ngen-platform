@@ -19,6 +19,9 @@ import { AdminDashboard } from './pages/admin/AdminDashboard';
 import { ServiceHealthPage } from './pages/admin/health/ServiceHealthPage';
 import { AdminUsagePage } from './pages/admin/usage/AdminUsagePage';
 import { AdminTenantsPage } from './pages/admin/tenants/AdminTenantsPage';
+import { AdminMemoryPage } from './pages/admin/memory/AdminMemoryPage';
+import { TenantMemoryPage } from './pages/tenant/memory/TenantMemoryPage';
+import KnowledgeBasePage from './pages/tenant/knowledge/KnowledgeBasePage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -52,6 +55,8 @@ export default function App() {
             <Route path="tools" element={<ServerListPage />} />
             <Route path="governance/policies" element={<PolicyListPage />} />
             <Route path="governance/budgets" element={<BudgetDashboard />} />
+            <Route path="knowledge" element={<KnowledgeBasePage />} />
+            <Route path="memory" element={<TenantMemoryPage />} />
             <Route path="usage" element={<TenantUsagePage />} />
             <Route path="settings/org" element={<OrgSettingsPage />} />
           </Route>
@@ -62,6 +67,7 @@ export default function App() {
             <Route path="tenants" element={<AdminTenantsPage />} />
             <Route path="usage" element={<AdminUsagePage />} />
             <Route path="governance" element={<PolicyListPage />} />
+            <Route path="memory" element={<AdminMemoryPage />} />
             <Route path="health" element={<ServiceHealthPage />} />
           </Route>
         </Routes>

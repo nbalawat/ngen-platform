@@ -162,11 +162,17 @@ class ParallelTopologyExecutor:
 
 
 class GraphTopologyExecutor:
-    """Execute agents following directed edges with conditional transitions.
+    """Execute agents following a directed acyclic graph with parallel support.
 
-    Builds an adjacency list from edges, starts at nodes with no incoming
-    edges, and traverses via BFS. Edge conditions are evaluated against
-    the current workflow state using safe_eval_condition.
+    Uses a data-flow execution model:
+    - Tracks in-degree (unsatisfied predecessor count) per node
+    - Nodes with in_degree == 0 are "ready" to execute
+    - If multiple nodes are ready simultaneously, they run in parallel
+    - Supports fan-in (wait for all predecessors) and fan-out (parallel branches)
+    - Edge conditions are evaluated against workflow state
+
+    This handles mixed patterns: sequential chains, parallel branches,
+    conditional routing, and fan-in convergence in a single graph.
     """
 
     MAX_ITERATIONS = 100  # Guard against cycles
@@ -184,95 +190,158 @@ class GraphTopologyExecutor:
         if not edges:
             raise TopologyError("Graph topology requires at least one edge")
 
-        # Build adjacency list
+        # Build adjacency and reverse-adjacency lists
         adjacency: dict[str, list[WorkflowEdge]] = defaultdict(list)
+        predecessors: dict[str, list[WorkflowEdge]] = defaultdict(list)
         targets: set[str] = set()
         sources: set[str] = set()
         for edge in edges:
             adjacency[edge.source].append(edge)
+            predecessors[edge.target].append(edge)
             sources.add(edge.source)
             targets.add(edge.target)
 
-        # Find start nodes (nodes with no incoming edges)
-        all_nodes = sources | targets
-        start_nodes = [n for n in agents if n in (sources - targets)]
-        if not start_nodes:
-            # Fallback: use the first agent
-            start_nodes = [agents[0]]
+        agent_set = set(agents)
+        all_nodes = (sources | targets) & agent_set
 
-        # BFS traversal
-        queue: list[str] = list(start_nodes)
-        visited: set[str] = set()
+        # Compute initial in-degree (number of incoming edges per node)
+        in_degree: dict[str, int] = {n: 0 for n in all_nodes}
+        for edge in edges:
+            if edge.target in in_degree:
+                in_degree[edge.target] += 1
+
+        # Start nodes: in_degree == 0
+        ready: list[str] = [n for n in agents if n in all_nodes and in_degree.get(n, 0) == 0]
+        if not ready:
+            ready = [agents[0]]
+
+        completed: set[str] = set()
         iterations = 0
 
-        while queue and iterations < self.MAX_ITERATIONS:
+        while ready and iterations < self.MAX_ITERATIONS:
             iterations += 1
-            current = queue.pop(0)
 
-            if current in visited:
-                continue
-            visited.add(current)
-
-            if current not in [a for a in agents]:
-                continue
-
-            # Execute the current agent
-            await state.set_current_agent(current)
-            agent_input = AgentInput(
-                messages=input_data.messages,
-                context={**input_data.context, **state.to_dict()},
-                session_id=input_data.session_id,
-            )
-
-            resilience = (resilience_configs or {}).get(current)
-            if resilience and (resilience.retry.max_retries > 0 or resilience.timeout.timeout_seconds or resilience.circuit_breaker_enabled):
-                events = await execute_with_resilience(
-                    agent_name=current,
-                    execute_fn=lambda _name=current, _input=agent_input: executor.execute(_name, _input),
-                    resilience=resilience,
-                    circuit_registry=circuit_registry,
-                )
-                collected_text: list[str] = []
-                for event in events:
-                    if event.type == AgentEventType.TEXT_DELTA:
-                        collected_text.append(event.data.get("text", ""))
+            if len(ready) == 1:
+                # Single node ready — execute sequentially
+                node = ready.pop(0)
+                async for event in self._execute_agent(
+                    node, executor, state, input_data,
+                    resilience_configs, circuit_registry,
+                ):
                     yield event
+                completed.add(node)
             else:
-                collected_text = []
-                async for event in executor.execute(current, agent_input):
-                    if event.type == AgentEventType.TEXT_DELTA:
-                        collected_text.append(event.data.get("text", ""))
-                    yield event
+                # Multiple nodes ready — execute in parallel
+                logger.info("Executing %d agents in parallel: %s", len(ready), ready)
+                parallel_nodes = list(ready)
+                ready.clear()
 
-            output = {"text": "".join(collected_text)}
-            await state.record_agent_output(current, output)
-            await state.set(f"{current}_output", output)
+                # Collect events from all parallel agents
+                all_events: list[list[AgentEvent]] = await asyncio.gather(*[
+                    self._execute_agent_collect(
+                        node, executor, state, input_data,
+                        resilience_configs, circuit_registry,
+                    )
+                    for node in parallel_nodes
+                ])
 
-            # Evaluate outgoing edges and enqueue targets
-            for edge in adjacency.get(current, []):
-                if edge.condition:
-                    try:
-                        if not safe_eval_condition(edge.condition, state.to_dict()):
-                            logger.debug(
-                                "Edge %s→%s condition '%s' is False, skipping",
-                                edge.source,
-                                edge.target,
-                                edge.condition,
-                            )
-                            continue
-                    except Exception:
-                        logger.warning(
-                            "Edge %s→%s condition '%s' failed, skipping",
-                            edge.source,
-                            edge.target,
-                            edge.condition,
-                        )
+                # Yield events from all parallel agents
+                for node, events in zip(parallel_nodes, all_events):
+                    for event in events:
+                        yield event
+                    completed.add(node)
+
+            # After executing, find newly ready nodes
+            ready.clear()
+            for node in list(completed):
+                for edge in adjacency.get(node, []):
+                    target = edge.target
+                    if target in completed or target not in agent_set:
                         continue
 
-                if edge.target not in visited:
-                    queue.append(edge.target)
+                    # Check edge condition
+                    if edge.condition:
+                        try:
+                            if not safe_eval_condition(edge.condition, state.to_dict()):
+                                logger.debug(
+                                    "Edge %s→%s condition '%s' is False, skipping",
+                                    edge.source, edge.target, edge.condition,
+                                )
+                                continue
+                        except Exception:
+                            logger.warning(
+                                "Edge %s→%s condition '%s' failed, skipping",
+                                edge.source, edge.target, edge.condition,
+                            )
+                            continue
+
+                    # Check if ALL predecessors of target are completed
+                    all_preds_done = all(
+                        pred_edge.source in completed
+                        for pred_edge in predecessors.get(target, [])
+                    )
+                    if all_preds_done and target not in ready:
+                        ready.append(target)
 
         await state.set_current_agent(None)
+
+    async def _execute_agent(
+        self,
+        agent_name: str,
+        executor: AgentExecutor,
+        state: WorkflowState,
+        input_data: AgentInput,
+        resilience_configs: dict[str, ResilienceConfig] | None,
+        circuit_registry: CircuitBreakerRegistry | None,
+    ) -> AsyncIterator[AgentEvent]:
+        """Execute a single agent and yield its events."""
+        await state.set_current_agent(agent_name)
+        agent_input = AgentInput(
+            messages=input_data.messages,
+            context={**input_data.context, **state.to_dict()},
+            session_id=input_data.session_id,
+        )
+
+        collected_text: list[str] = []
+        resilience = (resilience_configs or {}).get(agent_name)
+        if resilience and (resilience.retry.max_retries > 0 or resilience.timeout.timeout_seconds or resilience.circuit_breaker_enabled):
+            events = await execute_with_resilience(
+                agent_name=agent_name,
+                execute_fn=lambda _name=agent_name, _input=agent_input: executor.execute(_name, _input),
+                resilience=resilience,
+                circuit_registry=circuit_registry,
+            )
+            for event in events:
+                if event.type == AgentEventType.TEXT_DELTA:
+                    collected_text.append(event.data.get("text", ""))
+                yield event
+        else:
+            async for event in executor.execute(agent_name, agent_input):
+                if event.type == AgentEventType.TEXT_DELTA:
+                    collected_text.append(event.data.get("text", ""))
+                yield event
+
+        output = {"text": "".join(collected_text)}
+        await state.record_agent_output(agent_name, output)
+        await state.set(f"{agent_name}_output", output)
+
+    async def _execute_agent_collect(
+        self,
+        agent_name: str,
+        executor: AgentExecutor,
+        state: WorkflowState,
+        input_data: AgentInput,
+        resilience_configs: dict[str, ResilienceConfig] | None,
+        circuit_registry: CircuitBreakerRegistry | None,
+    ) -> list[AgentEvent]:
+        """Execute a single agent and collect all events (for parallel execution)."""
+        events: list[AgentEvent] = []
+        async for event in self._execute_agent(
+            agent_name, executor, state, input_data,
+            resilience_configs, circuit_registry,
+        ):
+            events.append(event)
+        return events
 
 
 # ---------------------------------------------------------------------------

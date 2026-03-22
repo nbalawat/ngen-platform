@@ -254,9 +254,9 @@ export function WorkflowRunPage() {
                   <span className={`px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${getEventColor(evt.event)}`}>
                     {evt.event}
                   </span>
-                  {evt.data?.agent_name && (
-                    <span className="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">{evt.data.agent_name as string}</span>
-                  )}
+                  {evt.data?.agent_name ? (
+                    <span className="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">{String(evt.data.agent_name)}</span>
+                  ) : null}
                   <span className="text-gray-600 text-xs flex-1 truncate font-mono">
                     {evt.event === 'text_delta' && (evt.data?.data as any)?.text
                       ? String((evt.data?.data as any).text)

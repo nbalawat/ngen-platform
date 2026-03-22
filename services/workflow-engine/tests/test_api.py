@@ -63,7 +63,7 @@ class TestListRuns:
         assert resp.json() == []
 
     async def test_list_after_run(self, client, make_crd, crd_to_yaml):
-        crd = make_crd(agents=["agent-a"])
+        crd = make_crd(agents=["agent-a", "agent-b"])
         await client.post(
             "/workflows/run",
             json={"workflow_yaml": crd_to_yaml(crd)},
@@ -73,7 +73,7 @@ class TestListRuns:
         assert len(resp.json()) == 1
 
     async def test_filter_by_status(self, client, make_crd, crd_to_yaml):
-        crd = make_crd(agents=["agent-a"])
+        crd = make_crd(agents=["agent-a", "agent-b"])
         await client.post(
             "/workflows/run",
             json={"workflow_yaml": crd_to_yaml(crd)},
@@ -89,7 +89,7 @@ class TestListRuns:
 
 class TestGetRun:
     async def test_get_existing(self, client, make_crd, crd_to_yaml):
-        crd = make_crd(agents=["agent-a"])
+        crd = make_crd(agents=["agent-a", "agent-b"])
         run_resp = await client.post(
             "/workflows/run",
             json={"workflow_yaml": crd_to_yaml(crd)},
@@ -111,7 +111,7 @@ class TestApproveRun:
         assert resp.status_code == 404
 
     async def test_approve_not_waiting(self, client, make_crd, crd_to_yaml):
-        crd = make_crd(agents=["agent-a"])
+        crd = make_crd(agents=["agent-a", "agent-b"])
         run_resp = await client.post(
             "/workflows/run",
             json={"workflow_yaml": crd_to_yaml(crd)},
@@ -127,8 +127,94 @@ class TestCancelRun:
         resp = await client.delete("/workflows/runs/nonexistent")
         assert resp.status_code == 404
 
+
+class TestWorkflowValidation:
+    """Workflow requests should be validated before execution."""
+
+    async def test_rejects_empty_agents(self, client, crd_to_yaml, make_crd):
+        """Workflow with 0 agents should be rejected."""
+        import yaml as _yaml
+        raw = {
+            "apiVersion": "ngen.io/v1",
+            "kind": "Workflow",
+            "metadata": {"name": "empty-workflow"},
+            "spec": {
+                "agents": [],
+                "topology": "sequential",
+            },
+        }
+        resp = await client.post(
+            "/workflows/run",
+            json={"workflow_yaml": _yaml.dump(raw)},
+        )
+        assert resp.status_code == 400
+        assert "agent" in resp.json()["detail"].lower()
+
+    async def test_sequential_needs_at_least_two_agents(self, client, make_crd, crd_to_yaml):
+        """Sequential workflow with 1 agent is a degenerate case."""
+        crd = make_crd(
+            agents=["only-one"],
+            topology=TopologyType.SEQUENTIAL,
+        )
+        resp = await client.post(
+            "/workflows/run",
+            json={"workflow_yaml": crd_to_yaml(crd)},
+        )
+        assert resp.status_code == 400
+        assert "sequential" in resp.json()["detail"].lower() or "agent" in resp.json()["detail"].lower()
+
+    async def test_parallel_needs_at_least_two_agents(self, client, make_crd, crd_to_yaml):
+        """Parallel workflow with 1 agent doesn't make sense."""
+        crd = make_crd(
+            agents=["only-one"],
+            topology=TopologyType.PARALLEL,
+        )
+        resp = await client.post(
+            "/workflows/run",
+            json={"workflow_yaml": crd_to_yaml(crd)},
+        )
+        assert resp.status_code == 400
+
+    async def test_graph_needs_edges(self, client, make_crd, crd_to_yaml):
+        """Graph topology with multiple agents but no edges is invalid."""
+        crd = make_crd(
+            agents=["agent-a", "agent-b", "agent-c"],
+            topology=TopologyType.GRAPH,
+        )
+        resp = await client.post(
+            "/workflows/run",
+            json={"workflow_yaml": crd_to_yaml(crd)},
+        )
+        assert resp.status_code == 400
+        assert "edge" in resp.json()["detail"].lower()
+
+    async def test_valid_sequential_passes(self, client, make_crd, crd_to_yaml):
+        """Valid sequential workflow with 2+ agents should succeed."""
+        crd = make_crd(
+            agents=["agent-a", "agent-b"],
+            topology=TopologyType.SEQUENTIAL,
+        )
+        resp = await client.post(
+            "/workflows/run",
+            json={"workflow_yaml": crd_to_yaml(crd)},
+        )
+        assert resp.status_code == 200
+
+    async def test_valid_graph_with_edges_passes(self, client, make_crd, crd_to_yaml):
+        """Valid graph workflow with agents and edges should succeed."""
+        crd = make_crd(
+            agents=["agent-a", "agent-b"],
+            topology=TopologyType.GRAPH,
+            edges=[{"from": "agent-a", "to": "agent-b"}],
+        )
+        resp = await client.post(
+            "/workflows/run",
+            json={"workflow_yaml": crd_to_yaml(crd)},
+        )
+        assert resp.status_code == 200
+
     async def test_cancel_completed(self, client, make_crd, crd_to_yaml):
-        crd = make_crd(agents=["agent-a"])
+        crd = make_crd(agents=["agent-a", "agent-b"])
         run_resp = await client.post(
             "/workflows/run",
             json={"workflow_yaml": crd_to_yaml(crd)},

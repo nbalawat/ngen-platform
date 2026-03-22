@@ -384,6 +384,12 @@ class Subjects:
     LIFECYCLE_PROJECT_CREATED = "lifecycle.project_created"
     LIFECYCLE_PROJECT_DELETED = "lifecycle.project_deleted"
 
+    # Memory events
+    MEMORY_WRITTEN = "memory.written"
+    MEMORY_DELETED = "memory.deleted"
+    MEMORY_EXPIRED = "memory.expired"
+    MEMORY_SUMMARIZED = "memory.summarized"
+
 
 # ---------------------------------------------------------------------------
 # Event publishing helpers
@@ -460,6 +466,32 @@ def add_event_bus(
         logger.info("Event bus disconnected for %s", service_name)
 
     return bus
+
+
+async def publish_memory_event(
+    bus: EventBus,
+    subject: str,
+    tenant_id: str,
+    agent_name: str,
+    memory_type: str,
+    size_bytes: int = 0,
+    token_estimate: int = 0,
+    entry_count: int = 1,
+    source: str = "workflow-engine",
+) -> Event:
+    """Publish a memory event (written, deleted, expired, summarized)."""
+    return await bus.publish(
+        subject,
+        {
+            "tenant_id": tenant_id,
+            "agent_name": agent_name,
+            "memory_type": memory_type,
+            "size_bytes": size_bytes,
+            "token_estimate": token_estimate,
+            "entry_count": entry_count,
+        },
+        source=source,
+    )
 
 
 async def publish_audit_event(

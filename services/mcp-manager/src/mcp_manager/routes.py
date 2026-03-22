@@ -186,6 +186,9 @@ async def invoke_tool(body: ToolCallRequest, request: Request) -> ToolCallRespon
     repo = _get_repository()
     server = repo.get_server_by_name(body.server_name, body.namespace)
     if server is None:
+        # Fall back to default namespace (builtin servers are registered there)
+        server = repo.get_server_by_name(body.server_name, "default")
+    if server is None:
         raise HTTPException(
             status_code=404,
             detail=f"Server '{body.server_name}' not found in namespace '{body.namespace}'",
@@ -207,6 +210,7 @@ async def invoke_tool(body: ToolCallRequest, request: Request) -> ToolCallRespon
             server=server,
             tool_name=body.tool_name,
             arguments=body.arguments,
+            namespace=body.namespace,
         )
     except MCPTransportError as exc:
         duration_ms = (time.monotonic() - start) * 1000

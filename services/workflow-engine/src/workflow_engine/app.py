@@ -15,7 +15,7 @@ from ngen_common.cors import add_cors
 from ngen_common.error_handlers import add_error_handlers
 from ngen_common.events import add_event_bus
 from ngen_common.observability import add_observability
-from workflow_engine.agent_manager import AgentRegistry, agent_router
+from workflow_engine.agent_manager import AgentRegistry, agent_router, memory_router
 from workflow_engine.config import Settings
 from workflow_engine.default_adapter import DefaultAdapter
 from workflow_engine.engine import WorkflowEngine
@@ -71,6 +71,7 @@ def create_app(
     app.state.version_store = VersionStore()
     app.include_router(router)
     app.include_router(agent_router)
+    app.include_router(memory_router)
     app.include_router(version_router)
 
     @app.get("/health")

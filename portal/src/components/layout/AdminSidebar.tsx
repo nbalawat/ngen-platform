@@ -5,6 +5,7 @@ const navItems = [
   { label: 'Dashboard', path: '/admin', icon: '📊' },
   { label: 'Tenants', path: '/admin/tenants', icon: '🏢' },
   { label: 'Usage Analytics', path: '/admin/usage', icon: '📈' },
+  { label: 'Memory', path: '/admin/memory', icon: '💾' },
   { label: 'Governance', path: '/admin/governance', icon: '🛡️' },
   { label: 'Service Health', path: '/admin/health', icon: '💚' },
 ];

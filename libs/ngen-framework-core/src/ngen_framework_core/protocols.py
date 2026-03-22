@@ -117,6 +117,8 @@ class MemoryEntry:
     created_at: float = 0.0
     ttl_seconds: int | None = None
     summary_id: str | None = None  # links summarized entries to their summary
+    size_bytes: int = 0
+    token_estimate: int = 0
 
 
 @dataclass(frozen=True)
@@ -463,4 +465,12 @@ class MemoryStore(Protocol):
 
     async def count(self, scope: MemoryScope, memory_type: MemoryType) -> int:
         """Count entries for a scope and type."""
+        ...
+
+    async def stats(self, scope: MemoryScope) -> dict[str, Any]:
+        """Return per-type stats for a scope.
+
+        Returns ``{memory_type_value: {"count": int, "size_bytes": int, "token_estimate": int}}``
+        for every type that has entries under *scope*.
+        """
         ...

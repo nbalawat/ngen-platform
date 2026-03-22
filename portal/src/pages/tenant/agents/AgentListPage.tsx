@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { queryKeys } from '../../../lib/constants';
@@ -7,10 +8,17 @@ import { StatusBadge } from '../../../components/shared/StatusBadge';
 
 export function AgentListPage() {
   const qc = useQueryClient();
+  const [search, setSearch] = useState('');
   const { data: agents, isLoading } = useQuery({ queryKey: queryKeys.agents.all, queryFn: agentApi.list });
   const deleteMut = useMutation({
     mutationFn: (name: string) => agentApi.delete(name),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.agents.all }),
+  });
+
+  const filtered = agents?.filter((a) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return a.name.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q);
   });
 
   return (
@@ -28,15 +36,30 @@ export function AgentListPage() {
         </Link>
       </div>
 
+      {agents && agents.length > 0 && (
+        <div className="mb-4">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search agents by name or description..."
+            className="w-80 px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+      )}
+
       {isLoading ? (
         <div className="flex items-center justify-center py-20">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
         </div>
-      ) : !agents || agents.length === 0 ? (
+      ) : !filtered || filtered.length === 0 ? (
         <div className="text-center py-20 bg-white rounded-xl border border-gray-200">
           <span className="text-4xl">🧠</span>
-          <h3 className="mt-3 text-lg font-medium text-gray-900">No agents yet</h3>
-          <p className="mt-1 text-sm text-gray-500">Create your first agent to get started</p>
+          <h3 className="mt-3 text-lg font-medium text-gray-900">
+            {search ? 'No agents match your search' : 'No agents yet'}
+          </h3>
+          <p className="mt-1 text-sm text-gray-500">
+            {search ? 'Try a different search term' : 'Create your first agent to get started'}
+          </p>
           <Link to="/app/agents/new" className="mt-4 inline-flex items-center text-sm text-blue-600 hover:text-blue-700">
             Create your first agent &rarr;
           </Link>
@@ -55,7 +78,7 @@ export function AgentListPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {agents.map((agent) => (
+              {filtered?.map((agent) => (
                 <tr key={agent.name} className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3">
                     <Link to={`/app/agents/${agent.name}`} className="text-sm font-medium text-blue-600 hover:text-blue-800">

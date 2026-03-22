@@ -40,66 +40,37 @@ from workflow_engine.engine import WorkflowEngine
 
 
 class InMemoryAdapter:
-    """A real FrameworkAdapter that produces deterministic events.
+    """A real FrameworkAdapter that produces context-aware events.
 
-    Each agent yields THINKING → TEXT_DELTA → DONE events with output
-    based on the agent name and input context.
+    Delegates to DefaultAdapter's rich response logic but registers
+    with name "in-memory" for test fixtures.
     """
 
     def __init__(self) -> None:
-        self._agents: dict[str, AgentSpec] = {}
-        self._states: dict[str, dict[str, Any]] = {}
+        from workflow_engine.default_adapter import DefaultAdapter
+        self._delegate = DefaultAdapter()
 
     @property
     def name(self) -> str:
         return "in-memory"
 
     async def create_agent(self, spec: AgentSpec) -> str:
-        self._agents[spec.name] = spec
-        self._states[spec.name] = {}
-        return spec.name
+        return await self._delegate.create_agent(spec)
 
     async def execute(
         self, agent: str, input: AgentInput
     ) -> AsyncIterator[AgentEvent]:
-        spec = self._agents.get(agent)
-        agent_name = spec.name if spec else agent
-
-        yield AgentEvent(
-            type=AgentEventType.THINKING,
-            data={"text": f"Agent '{agent_name}' is thinking..."},
-            agent_name=agent_name,
-            timestamp=time.time(),
-        )
-
-        # Produce deterministic output based on agent name
-        output_text = f"Output from {agent_name}"
-        yield AgentEvent(
-            type=AgentEventType.TEXT_DELTA,
-            data={"text": output_text},
-            agent_name=agent_name,
-            timestamp=time.time(),
-        )
-
-        yield AgentEvent(
-            type=AgentEventType.DONE,
-            data={},
-            agent_name=agent_name,
-            timestamp=time.time(),
-        )
+        async for event in self._delegate.execute(agent, input):
+            yield event
 
     async def checkpoint(self, agent: str) -> StateSnapshot:
-        return StateSnapshot(
-            agent_name=agent,
-            state=dict(self._states.get(agent, {})),
-        )
+        return await self._delegate.checkpoint(agent)
 
     async def restore(self, agent: str, snapshot: StateSnapshot) -> None:
-        self._states[agent] = dict(snapshot.state)
+        await self._delegate.restore(agent, snapshot)
 
     async def teardown(self, agent: str) -> None:
-        self._agents.pop(agent, None)
-        self._states.pop(agent, None)
+        await self._delegate.teardown(agent)
 
 
 # ---------------------------------------------------------------------------

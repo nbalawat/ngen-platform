@@ -22,6 +22,7 @@ class TransportType(StrEnum):
     STREAMABLE_HTTP = "streamable-http"
     SSE = "sse"
     STDIO = "stdio"
+    BUILTIN = "builtin"
 
 
 class AuthType(StrEnum):
